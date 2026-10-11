@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quản lý dự án nhóm · AI</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header class="topbar">
+    <div class="brand">📋 Quản lý dự án nhóm <span class="ai-tag">AI</span></div>
+    <div class="topbar-right">
+      <button id="theme-toggle" class="btn small" type="button">🌙 Tối</button>
+      <div id="user-box" hidden>
+        <span id="user-name"></span>
+        <button id="logout-btn" class="btn small" type="button">Đăng xuất</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+        <!-- ĐĂNG NHẬP / ĐĂNG KÝ -->
+    <section id="auth-view" class="auth-wrap" hidden>
+      <div class="auth-card">
+        <div class="auth-brand">
+          <div class="auth-logo">📋</div>
+          <h1>Quản lý dự án nhóm</h1>
+          <p class="muted small">Theo dõi nhiệm vụ, tiến độ và nhận gợi ý từ AI</p>
+        </div>
+
+        <form id="auth-form" class="auth-form">
+          <h2 id="auth-title">Đăng nhập</h2>
+          <p id="auth-subtitle" class="sub muted">Chào mừng bạn quay lại</p>
+
+          <p id="auth-error" class="form-error" hidden></p>
+
+          <div class="field" id="auth-name-row" hidden>
+            <label for="auth-name">Họ tên</label>
+            <input id="auth-name" name="name" autocomplete="name" placeholder="Nhập họ tên đầy đủ">
+          </div>
+          <div class="field">
+            <label for="auth-email">Email</label>
+            <input id="auth-email" name="email" type="email" autocomplete="email" placeholder="ten@email.com" required>
+          </div>
+          <div class="field">
+            <label for="auth-password">Mật khẩu</label>
+            <div class="pw-wrap">
+              <input id="auth-password" name="password" type="password" minlength="6"
+                     autocomplete="current-password" placeholder="Tối thiểu 6 ký tự" required>
+              <button type="button" class="pw-toggle" id="pw-toggle">Hiện</button>
+            </div>
+          </div>
+
+          <button class="btn primary block" id="auth-submit" type="submit">Đăng nhập</button>
+        </form>
+
+        <div class="auth-footer">
+          <span id="auth-switch-text"></span>
+          <button type="button" class="link" id="auth-switch"></button>
+        </div>
+
+        <p class="demo-note">Tài khoản demo: <code>manager@demo.com</code> / <code>123456</code></p>
+      </div>
+    </section>
+
+    <!-- DANH SÁCH DỰ ÁN -->
+    <section id="projects-view" hidden>
+      <h2>Dự án của bạn</h2>
+      <div class="grid-2">
+        <div id="project-list" class="project-grid"></div>
+        <form id="new-project-form" class="card">
+          <h3>Tạo dự án mới</h3>
+          <label>Tên dự án <input name="name" required></label>
+          <label>Mô tả <textarea name="description" rows="3"></textarea></label>
+          <div class="row">
+            <label>Bắt đầu <input type="date" name="start_date"></label>
+            <label>Kết thúc <input type="date" name="end_date"></label>
+          </div>
+          <button class="btn primary" type="submit">Tạo dự án</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- CHI TIẾT DỰ ÁN -->
+    <section id="project-view" hidden>
+      <button class="link" id="back-btn" type="button">← Danh sách dự án</button>
+      <div class="card">
+        <h2 id="project-title"></h2>
+        <p id="project-desc" class="muted"></p>
+        <small id="project-dates" class="muted"></small>
+      </div>
+
+      <div class="project-layout">
+        <nav class="tabs">
+        <button class="tab active" data-tab="tasks" type="button">Nhiệm vụ</button>
+        <button class="tab" data-tab="stats" type="button">Thống kê</button>
+        <button class="tab" data-tab="ai" type="button">Trợ lý AI</button>
+        <button class="tab" data-tab="lab" type="button">Phòng Thử prompt</button>
+        <button class="tab" data-tab="members" type="button">Thành viên</button>
+        <button class="tab" data-tab="activity" type="button">Hoạt động</button>
+      </nav>
+      <div class="project-main">
+        <!-- Tab Nhiệm vụ -->
+      <div id="tab-tasks" class="tab-panel">
+        <div class="toolbar">
+          <input id="f-q" placeholder="Tìm theo tên hoặc mô tả...">
+          <select id="f-status">
+            <option value="">Mọi trạng thái</option>
+            <option value="todo">Chưa làm</option>
+            <option value="doing">Đang làm</option>
+            <option value="done">Hoàn thành</option>
+          </select>
+          <select id="f-priority">
+            <option value="">Mọi ưu tiên</option>
+            <option value="high">Cao</option>
+            <option value="medium">Trung bình</option>
+            <option value="low">Thấp</option>
+          </select>
+          <select id="f-assignee"></select>
+          <select id="f-sort">
+            <option value="deadline">Sắp xếp: hạn gần nhất</option>
+            <option value="priority">Sắp xếp: ưu tiên</option>
+            <option value="newest">Sắp xếp: mới nhất</option>
+          </select>
+          <button class="btn primary mgr" id="add-task-btn" type="button">+ Nhiệm vụ</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nhiệm vụ</th>
+                <th>Người phụ trách</th>
+                <th>Ưu tiên</th>
+                <th>Hạn</th>
+                <th>Trạng thái</th>
+                <th class="mgr"></th>
+              </tr>
+            </thead>
+            <tbody id="task-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab Thống kê -->
+      <div id="tab-stats" class="tab-panel" hidden>
+        <div id="stat-cards" class="stat-cards"></div>
+        <div class="card">
+          <h3>Phân bổ trạng thái</h3>
+          <div id="status-bars"></div>
+        </div>
+        <div class="card">
+          <h3>Khối lượng theo thành viên</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Thành viên</th><th>Tổng</th><th>Hoàn thành</th><th>Đang mở</th><th>Quá hạn</th></tr>
+              </thead>
+              <tbody id="member-stats"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+            <!-- Tab Trợ lý AI -->
+      <div id="tab-ai" class="tab-panel" hidden>
+        <div class="card">
+          <div class="row-between">
+            <h3>Trợ lý AI</h3>
+            <span id="ai-meta" class="badge"></span>
+          </div>
+          <p class="muted small">
+            AI chỉ đọc dữ liệu dự án và đề xuất. Thay đổi chỉ được áp dụng khi người quản lý mở và lưu nhiệm vụ.
+          </p>
+          <div class="ai-actions">
+            <button class="btn primary" id="ai-analyze" type="button">Phân tích tiến độ</button>
+          </div>
+          <div class="chips">
+            <button class="chip" type="button" data-q="Nhiệm vụ nào đang quá hạn?">Nhiệm vụ quá hạn</button>
+            <button class="chip" type="button" data-q="Ai đang có nhiều việc mở nhất?">Khối lượng công việc</button>
+            <button class="chip" type="button" data-q="Nên làm việc gì tiếp theo?">Thứ tự ưu tiên</button>
+          </div>
+          <form id="ai-ask-form" class="ask-row">
+            <input name="question" placeholder="Hoặc đặt câu hỏi tự do về dự án..." maxlength="500" required>
+            <button class="btn" type="submit">Hỏi AI</button>
+          </form>
+          <div id="ai-notice" class="notice" hidden></div>
+          <div id="ai-result" class="ai-result">
+            <p class="muted">Chọn "Phân tích tiến độ" hoặc đặt câu hỏi để bắt đầu.</p>
+          </div>
+        </div>
+      </div>
+                  <!-- Tab Phòng Thử prompt -->
+      <div id="tab-lab" class="tab-panel" hidden>
+        <div class="card">
+          <div class="row-between">
+            <h3>Phòng Thử prompt</h3>
+            <span id="lab-meta" class="badge"></span>
+          </div>
+          <p class="muted small">
+            Chạy từng biến thể để xem kết quả riêng, hoặc chạy cả ba để so sánh. Kết quả được cộng dồn vào bảng bên dưới.
+          </p>
+          <div class="lab-row">
+            <label for="lab-variant">Biến thể:</label>
+            <select id="lab-variant">
+              <option value="v1_basic">Biến thể 1: prompt cơ bản</option>
+              <option value="v2_schema">Biến thể 2: có schema JSON</option>
+              <option value="v3_final" selected>Biến thể 3: hoàn chỉnh</option>
+            </select>
+            <button class="btn" id="lab-run-one" type="button">Chạy biến thể này</button>
+            <button class="btn primary" id="lab-run" type="button">So sánh 3 biến thể</button>
+            <button class="btn small" id="lab-clear" type="button">Xóa bảng</button>
+          </div>
+          <div class="lab-guide">
+            <p><strong>Cách đọc bảng:</strong></p>
+            <ul class="ai-list">
+              <li><strong>JSON hợp lệ:</strong> AI trả về đúng định dạng.</li>
+              <li><strong>Phải thử lại:</strong> lần đầu bị lỗi định dạng hoặc giới hạn lượt gọi nên phải gọi lại. Càng ít càng tốt.</li>
+              <li><strong>Quá hạn được nêu:</strong> số nhiệm vụ quá hạn AI đưa vào mục rủi ro, trên tổng số. Càng cao càng tốt.</li>
+              <li><strong>Mục bị loại:</strong> số mục AI bịa ID nhiệm vụ hoặc sai cấu trúc, hệ thống đã bỏ đi. Càng ít càng tốt.</li>
+            </ul>
+          </div>
+          <div id="lab-notice" class="notice" hidden></div>
+          <div id="lab-result" class="ai-result">
+            <p class="muted">Chọn biến thể rồi bấm "Chạy biến thể này", hoặc bấm "So sánh 3 biến thể".</p>
+          </div>
+        </div>
+      </div>
+      <!-- Tab Thành viên -->
+      <div id="tab-members" class="tab-panel" hidden>
+        <div class="card">
+          <h3>Thành viên dự án</h3>
+          <ul id="member-list" class="list"></ul>
+        </div>
+        <form id="member-form" class="card mgr toolbar">
+          <input type="email" name="email" placeholder="Email của thành viên đã đăng ký" required>
+          <select name="role">
+            <option value="member">Thành viên</option>
+            <option value="manager">Quản lý</option>
+          </select>
+          <button class="btn primary" type="submit">Thêm thành viên</button>
+        </form>
+      </div>
+
+      <!-- Tab Hoạt động -->
+      <div id="tab-activity" class="tab-panel" hidden>
+        <div class="card">
+          <h3>Nhật ký hoạt động</h3>
+          <ul id="activity-list" class="list"></ul>
+        </div>
+      </div>
+      </div>
+      </div>     
+    </section>
+  </main>
+
+  <!-- Hộp thoại thêm/sửa nhiệm vụ -->
+  <dialog id="task-dialog">
+    <form id="task-form" class="dialog-form">
+      <h3 id="task-dialog-title">Nhiệm vụ</h3>
+      <input type="hidden" name="task_id">
+      <label>Tên nhiệm vụ <input name="title" required></label>
+      <label>Mô tả <textarea name="description" rows="2"></textarea></label>
+      <div class="row">
+        <label>Người phụ trách <select name="assignee_id" id="task-assignee"></select></label>
+        <label>Hạn hoàn thành <input type="date" name="deadline"></label>
+      </div>
+      <div class="row">
+        <label>Ưu tiên
+          <select name="priority">
+            <option value="low">Thấp</option>
+            <option value="medium">Trung bình</option>
+            <option value="high">Cao</option>
+          </select>
+        </label>
+        <label>Trạng thái
+          <select name="status">
+            <option value="todo">Chưa làm</option>
+            <option value="doing">Đang làm</option>
+            <option value="done">Hoàn thành</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn" id="task-cancel">Hủy</button>
+        <button type="submit" class="btn primary">Lưu</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="js/app.js"></script>
+</body>
+</html>
