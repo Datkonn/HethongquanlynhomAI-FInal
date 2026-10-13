@@ -9,49 +9,56 @@ fs.mkdirSync(path.dirname(dbFile), { recursive: true });
 const db = new Database(dbFile);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+  email TEXT NOT NULL UNIQUE CHECK (email = lower(email) AND instr(email, '@') > 1),
   password_hash TEXT NOT NULL,
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  description TEXT DEFAULT '',
-  start_date TEXT,
-  end_date TEXT,
+  name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+  description TEXT NOT NULL DEFAULT '',
+  start_date TEXT CHECK (start_date IS NULL OR start_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  end_date TEXT CHECK (end_date IS NULL OR end_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed')),
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK (start_date IS NULL OR end_date IS NULL OR end_date >= start_date)
 );
+
 CREATE TABLE IF NOT EXISTS project_members (
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('manager', 'member')),
   PRIMARY KEY (project_id, user_id)
 );
+
 CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  description TEXT DEFAULT '',
+  title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+  description TEXT NOT NULL DEFAULT '',
   assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
   status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'doing', 'done')),
-  deadline TEXT,
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
+  deadline TEXT CHECK (deadline IS NULL OR deadline GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
 CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   action TEXT NOT NULL,
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
 CREATE TABLE IF NOT EXISTS ai_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
@@ -60,8 +67,36 @@ CREATE TABLE IF NOT EXISTS ai_logs (
   prompt TEXT NOT NULL,
   response TEXT NOT NULL,
   mode TEXT NOT NULL,
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Chỉ mục cho các truy vấn thường dùng
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);
+CREATE INDEX IF NOT EXISTS idx_members_user ON project_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_activity_project ON activity(project_id, id);
+CREATE INDEX IF NOT EXISTS idx_ai_logs_project ON ai_logs(project_id);
+
+-- Trigger giữ tính nhất quán: người phụ trách phải là thành viên của dự án
+CREATE TRIGGER IF NOT EXISTS trg_tasks_assignee_insert BEFORE INSERT ON tasks
+WHEN NEW.assignee_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM project_members WHERE project_id = NEW.project_id AND user_id = NEW.assignee_id)
+BEGIN
+  SELECT RAISE(ABORT, 'Người phụ trách không thuộc dự án');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_tasks_assignee_update BEFORE UPDATE OF assignee_id, project_id ON tasks
+WHEN NEW.assignee_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM project_members WHERE project_id = NEW.project_id AND user_id = NEW.assignee_id)
+BEGIN
+  SELECT RAISE(ABORT, 'Người phụ trách không thuộc dự án');
+END;
+
+-- Khi xóa thành viên khỏi dự án, bỏ gán họ khỏi các nhiệm vụ của dự án đó
+CREATE TRIGGER IF NOT EXISTS trg_members_unassign AFTER DELETE ON project_members
+BEGIN
+  UPDATE tasks SET assignee_id = NULL WHERE project_id = OLD.project_id AND assignee_id = OLD.user_id;
+END;
 `);
 
 function day(offset) {
