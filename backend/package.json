@@ -6,8 +6,11 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test test/ai.test.js test/api.test.js",
-    "evaluate": "node scripts/evaluate-prompts.js"
+    "test": "node --test test/ai.test.js test/api.test.js test/functional.test.js test/db.test.js",
+    "evaluate": "node scripts/evaluate-prompts.js",
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js",
+    "check-db": "node scripts/check-db.js"
   },
   "engines": {
     "node": ">=18"
