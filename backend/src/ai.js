@@ -3,6 +3,7 @@ const prompts = require('./prompts');
 const PROVIDER = (process.env.AI_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : 'offline')).toLowerCase();
 const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 20000);
 const RETRY_DELAY_MS = Number(process.env.AI_RETRY_DELAY_MS ?? 1500);
+const ANONYMIZE = process.env.AI_ANONYMIZE === 'true';
 const MAX_TASKS = 100; // Giới hạn dữ liệu gửi lên AI
 const SEVERITIES = ['high', 'medium', 'low'];
 const FIELDS = ['priority', 'status', 'deadline', 'assignee'];
@@ -97,12 +98,34 @@ async function callProvider(system, user) {
   return fn(system, user);
 }
 
-// ---------- Chuẩn bị dữ liệu: tối thiểu hóa và giới hạn kích thước ----------
-function prepareData(ctx) {
+// ---------- Chuẩn bị dữ liệu: tối thiểu hóa, giới hạn, tùy chọn ẩn danh ----------
+function prepareData(ctx, opts = {}) {
   const tasks = ctx.tasks.slice(0, MAX_TASKS);
+  const anonymize = !!opts.anonymize;
+
+  // Ẩn danh: thay tên thật bằng "Thành viên 1", "Thành viên 2", ...
+  const aliasOf = new Map();
+  ctx.members.forEach((m, i) => aliasOf.set(m.name, `Thành viên ${i + 1}`));
+  const alias = (name) => {
+    if (!name) return null;
+    if (!anonymize) return name;
+    return aliasOf.get(name) || 'Thành viên khác';
+  };
+  const hideNames = (text) => {
+    if (!anonymize || !text) return text;
+    let out = text;
+    for (const [name, al] of aliasOf) out = out.split(name).join(al);
+    return out;
+  };
+
+  // Bảng đảo để trả tên thật về cho người dùng sau khi AI trả lời
+  const restoreMap = {};
+  for (const [name, al] of aliasOf) restoreMap[al] = name;
+
   return {
     validIds: new Set(tasks.map((t) => t.id)),
     truncated: ctx.tasks.length > tasks.length,
+    restoreMap: anonymize ? restoreMap : {},
     data: {
       project: {
         name: ctx.project.name,
@@ -111,21 +134,36 @@ function prepareData(ctx) {
         end_date: ctx.project.end_date,
         status: ctx.project.status,
       },
-      members: ctx.members.map((m) => ({ name: m.name, role: m.role })),
+      members: ctx.members.map((m) => ({ name: alias(m.name), role: m.role })),
       tasks: tasks.map((t) => ({
         id: t.id,
         title: t.title,
         status: t.status,
         priority: t.priority,
         deadline: t.deadline,
-        assignee: t.assignee || null,
+        assignee: alias(t.assignee),
         overdue: t.overdue,
       })),
-      recent_activity: (ctx.activity || []).slice(0, 10).map((a) => ({ who: a.user_name, action: a.action, at: a.created_at })),
+      recent_activity: (ctx.activity || []).slice(0, 10).map((a) => ({
+        who: alias(a.user_name),
+        action: hideNames(a.action),
+        at: a.created_at,
+      })),
       total_tasks: ctx.tasks.length,
       shown_tasks: tasks.length,
     },
   };
+}
+
+// Đổi lại tên thật trong kết quả AI (chỉ có tác dụng khi bật AI_ANONYMIZE)
+function restoreNames(result, restoreMap) {
+  if (!restoreMap || Object.keys(restoreMap).length === 0) return result;
+  const back = (s) => (typeof s === 'string' && Object.hasOwn(restoreMap, s) ? restoreMap[s] : s);
+  result.workload_warnings = result.workload_warnings.map((w) => ({ ...w, member: back(w.member) }));
+  result.suggested_actions = result.suggested_actions.map((a) =>
+    a.field === 'assignee' ? { ...a, value: back(a.value) } : a
+  );
+  return result;
 }
 
 // ---------- Kiểm tra và làm sạch đầu ra của AI ----------
@@ -230,19 +268,49 @@ function fallbackAnalysis(ctx) {
 }
 
 function offlineAnswer(ctx, question) {
-  const q = question.toLowerCase();
-  const tasks = ctx.tasks;
-  if (/trễ|quá hạn/.test(q)) {
+  const q = String(question || '').toLowerCase();
+  const tasks = ctx.tasks || [];
+  const projectName = ctx.project?.name || 'dự án';
+
+  if (/chào|hello|hi|xin chào|hey/.test(q)) {
+    return `Xin chào! Tôi là Trợ lý AI của ${projectName}. Tôi có thể giúp bạn theo dõi tiến độ, kiểm tra các việc quá hạn, phân tích khối lượng công việc của từng thành viên hoặc gợi ý các việc cần ưu tiên làm ngay. Hãy hỏi tôi bất cứ điều gì!`;
+  }
+  if (/trễ|quá hạn|deadline|hạn/.test(q)) {
     const overdue = tasks.filter((x) => x.overdue);
     return overdue.length
       ? `Có ${overdue.length} nhiệm vụ quá hạn: ${overdue.map((x) => x.title).join(', ')}.`
-      : 'Hiện không có nhiệm vụ nào quá hạn.';
+      : `Tuyệt vời! Hiện tại trong ${projectName} không có công việc nào bị quá hạn.`;
   }
-  if (/tiến độ|hoàn thành|bao nhiêu/.test(q)) {
+  if (/tiến độ|hoàn thành|bao nhiêu|tổng quan|tóm tắt|báo cáo/.test(q)) {
+    const total = tasks.length;
     const done = tasks.filter((x) => x.status === 'done').length;
-    return `Đã hoàn thành ${done}/${tasks.length} nhiệm vụ.`;
+    const doing = tasks.filter((x) => x.status === 'doing').length;
+    const overdue = tasks.filter((x) => x.overdue).length;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    return `Tiến độ ${projectName}: Đã hoàn thành ${done}/${total} nhiệm vụ (${pct}%). Hiện có ${doing} việc đang làm và ${overdue} việc quá hạn.`;
   }
-  return 'Chế độ dự phòng chỉ trả lời được một số câu hỏi cơ bản (tiến độ, nhiệm vụ quá hạn). Hãy bật AI để hỏi đáp tự do.';
+  if (/ưu tiên|làm gì tiếp|cần làm|gợi ý|tiếp theo/.test(q)) {
+    const highOpen = tasks.filter((x) => x.status !== 'done' && x.priority === 'high');
+    const doing = tasks.filter((x) => x.status === 'doing');
+    if (highOpen.length) {
+      return `Các công việc ưu tiên cao cần tập trung: ${highOpen.map((x) => x.title).join(', ')}.`;
+    }
+    if (doing.length) {
+      return `Nên tập trung hoàn thành các việc đang làm: ${doing.map((x) => x.title).join(', ')}.`;
+    }
+    return 'Hiện các công việc quan trọng đã được xử lý ổn thỏa. Bạn có thể giao thêm nhiệm vụ mới.';
+  }
+  if (/ai|thành viên|quá tải|khối lượng|nhiều việc/.test(q)) {
+    const load = {};
+    for (const t of tasks.filter((x) => x.status !== 'done')) {
+      const a = t.assignee || 'Chưa phân công';
+      load[a] = (load[a] || 0) + 1;
+    }
+    const entries = Object.entries(load).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) return 'Hiện không có công việc mở nào được giao.';
+    return 'Khối lượng công việc đang mở: ' + entries.map(([m, n]) => `${m} (${n} việc${n >= 3 ? ' - quá tải' : ''})`).join(', ') + '.';
+  }
+  return `Tôi đã nhận được câu hỏi về "${question}". Hiện tại trong ${projectName} có ${tasks.length} nhiệm vụ. Bạn có thể hỏi về tiến độ, việc quá hạn, ai đang nhiều việc nhất, hoặc thứ tự ưu tiên tiếp theo!`;
 }
 
 function fallback(kind, ctx, question, notice, truncated) {
@@ -252,7 +320,7 @@ function fallback(kind, ctx, question, notice, truncated) {
 
 // ---------- Hàm chính: gọi AI, kiểm tra, thử lại một lần, dự phòng khi lỗi ----------
 async function generate(kind, ctx, question = '', opts = {}) {
-  const { data, validIds, truncated } = prepareData(ctx);
+  const { data, validIds, truncated, restoreMap } = prepareData(ctx, { anonymize: ANONYMIZE });
   const variant = prompts.VARIANTS[opts.variant] || prompts.ACTIVE;
   const task = kind === 'ask' ? prompts.askTask(question) : prompts.ANALYZE_TASK;
   const user = variant.user(task, { today: ctx.today, data });
@@ -262,7 +330,7 @@ async function generate(kind, ctx, question = '', opts = {}) {
     return fallback(kind, ctx, question, 'Chưa bật AI, hiển thị kết quả dự phòng.', truncated);
   }
 
-  const attempt = async () => parseAnalysis(await call(variant.system, user), validIds);
+  const attempt = async () => restoreNames(parseAnalysis(await call(variant.system, user), validIds), restoreMap);
   let retried = false;
   try {
     let result;
@@ -320,6 +388,7 @@ module.exports = {
   sanitize,
   stripFences,
   fallbackAnalysis,
+  restoreNames,
   scoreRun,
   AiError,
   MAX_TASKS,

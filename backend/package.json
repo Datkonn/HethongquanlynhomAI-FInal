@@ -6,11 +6,12 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test test/ai.test.js test/api.test.js test/functional.test.js test/db.test.js",
+    "test": "node --test test/ai.test.js test/api.test.js test/functional.test.js test/db.test.js test/security.test.js test/members.test.js test/notify.test.js test/reports.test.js test/dashboard.test.js",
     "evaluate": "node scripts/evaluate-prompts.js",
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
-    "check-db": "node scripts/check-db.js"
+    "check-db": "node scripts/check-db.js",
+    "benchmark": "node scripts/benchmark.js"
   },
   "engines": {
     "node": ">=18"

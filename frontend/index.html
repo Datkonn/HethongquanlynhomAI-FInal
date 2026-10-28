@@ -12,11 +12,13 @@
     <div class="topbar-right">
       <button id="theme-toggle" class="btn small" type="button">🌙 Tối</button>
       <div id="user-box" hidden>
+                <button id="notif-btn" class="btn small" type="button">🔔 <span id="notif-count"></span></button>
         <span id="user-name"></span>
         <button id="logout-btn" class="btn small" type="button">Đăng xuất</button>
       </div>
     </div>
   </header>
+    <div id="notif-panel" class="card notif-panel" hidden></div>
 
   <main class="container">
         <!-- ĐĂNG NHẬP / ĐĂNG KÝ -->
@@ -63,9 +65,84 @@
       </div>
     </section>
 
-    <!-- DANH SÁCH DỰ ÁN -->
+    <!-- DANH SÁCH DỰ ÁN & DASHBOARD TỔNG QUAN -->
     <section id="projects-view" hidden>
-      <h2>Dự án của bạn</h2>
+      <div class="dash-header row-between" style="margin-bottom: 16px;">
+        <div>
+          <h2 style="margin: 0;">Trang tổng quan (Dashboard)</h2>
+          <p class="muted" style="margin: 4px 0 0;">Tổng hợp số liệu dự án, tiến độ công việc và các nhiệm vụ sắp đến hạn</p>
+        </div>
+        <button class="btn small" id="refresh-dash-btn" type="button" title="Làm mới số liệu">🔄 Cập nhật</button>
+      </div>
+
+      <!-- 1. Thống kê tổng số dự án, công việc, thành viên, việc cá nhân -->
+      <div class="stat-cards" id="dash-stat-cards">
+        <div class="card stat">
+          <span class="muted small">📁 Tổng số dự án</span>
+          <strong id="dash-total-projects">0</strong>
+        </div>
+        <div class="card stat">
+          <span class="muted small">📋 Tổng số công việc</span>
+          <strong id="dash-total-tasks">0</strong>
+        </div>
+        <div class="card stat">
+          <span class="muted small">👥 Thành viên tham gia</span>
+          <strong id="dash-total-members">0</strong>
+        </div>
+        <div class="card stat">
+          <span class="muted small">🎯 Việc bạn phụ trách</span>
+          <strong id="dash-my-tasks">0</strong>
+        </div>
+      </div>
+
+      <!-- 2. Thống kê công việc: Hoàn thành, Đang làm, Quá hạn & Tỷ lệ chung -->
+      <div class="card" id="dash-task-status-card">
+        <div class="row-between" style="margin-bottom: 10px;">
+          <h3 style="margin:0;">Thống kê trạng thái công việc</h3>
+          <span id="dash-overall-progress" class="badge ok">0% Hoàn thành</span>
+        </div>
+        <div class="perf-bar" style="height: 14px; margin-bottom: 12px; background: #e2e8f0;">
+          <div id="dash-bar-done" class="perf-bar-done" style="width: 0%;" title="Hoàn thành"></div>
+          <div id="dash-bar-doing" class="perf-bar-open" style="width: 0%;" title="Đang làm"></div>
+          <div id="dash-bar-overdue" class="perf-bar-overdue" style="width: 0%;" title="Quá hạn"></div>
+        </div>
+        <div class="dash-legend row" style="gap: 16px; font-size: 13px;">
+          <div><span class="legend-dot dot-done"></span> Hoàn thành: <strong id="dash-stat-done">0</strong></div>
+          <div><span class="legend-dot dot-doing"></span> Đang làm: <strong id="dash-stat-doing">0</strong></div>
+          <div><span class="legend-dot dot-todo"></span> Chưa làm: <strong id="dash-stat-todo">0</strong></div>
+          <div><span class="legend-dot dot-overdue"></span> Quá hạn: <strong id="dash-stat-overdue">0</strong></div>
+        </div>
+      </div>
+
+      <!-- 3. Biểu đồ tiến độ dự án & 4. Danh sách công việc sắp đến hạn -->
+      <div class="grid-2" style="margin-bottom: 24px;">
+        <!-- Biểu đồ tiến độ dự án -->
+        <div class="card">
+          <div class="row-between" style="margin-bottom: 8px;">
+            <h3 style="margin:0;">📊 Biểu đồ tiến độ dự án</h3>
+            <small class="muted">Nhấn vào để xem chi tiết</small>
+          </div>
+          <div id="dash-project-progress-list">
+            <p class="muted small">Chưa có dự án nào</p>
+          </div>
+        </div>
+
+        <!-- Danh sách công việc sắp đến hạn -->
+        <div class="card">
+          <div class="row-between" style="margin-bottom: 8px;">
+            <h3 style="margin:0;">⏰ Công việc sắp đến hạn</h3>
+            <small class="muted">Trong 7 ngày tới &amp; quá hạn</small>
+          </div>
+          <div id="dash-upcoming-list" style="max-height: 290px; overflow-y: auto;">
+            <p class="muted small">Không có công việc nào sắp đến hạn</p>
+          </div>
+        </div>
+      </div>
+
+      <hr style="border: 0; border-top: 1px solid var(--line); margin: 24px 0 20px;">
+
+      <h2 style="margin: 0 0 12px;">Dự án của bạn</h2>
+      <div id="inv-banner"></div>
       <div class="grid-2">
         <div id="project-list" class="project-grid"></div>
         <form id="new-project-form" class="card">
@@ -88,12 +165,13 @@
         <h2 id="project-title"></h2>
         <p id="project-desc" class="muted"></p>
         <small id="project-dates" class="muted"></small>
+        <button class="btn small danger owner" id="project-delete" type="button" hidden>Xóa dự án</button>
       </div>
 
       <div class="project-layout">
         <nav class="tabs">
         <button class="tab active" data-tab="tasks" type="button">Nhiệm vụ</button>
-        <button class="tab" data-tab="stats" type="button">Thống kê</button>
+        <button class="tab" data-tab="stats" type="button">Báo cáo & Thống kê</button>
         <button class="tab" data-tab="ai" type="button">Trợ lý AI</button>
         <button class="tab" data-tab="lab" type="button">Phòng Thử prompt</button>
         <button class="tab" data-tab="members" type="button">Thành viên</button>
@@ -141,21 +219,102 @@
         </div>
       </div>
 
-      <!-- Tab Thống kê -->
+      <!-- Tab Báo cáo & Thống kê -->
       <div id="tab-stats" class="tab-panel" hidden>
+        <!-- Tiêu đề khi In / Xuất PDF -->
+        <div id="print-header">
+          <h2 style="margin: 0 0 6px;">BÁO CÁO TIẾN ĐỘ VÀ THỐNG KÊ DỰ ÁN</h2>
+          <div id="print-meta" class="muted small" style="margin-bottom: 12px;"></div>
+        </div>
+
+        <!-- Thanh công cụ Báo cáo & Xuất file -->
+        <div class="card toolbar row-between" style="flex-wrap: wrap; gap: 10px; margin-bottom: 16px;">
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <label style="margin: 0; font-weight: 600;">Xem tiến độ:</label>
+            <select id="stat-period-select" style="font-size: 13px; padding: 5px 10px;">
+              <option value="month">Theo tháng</option>
+              <option value="week">Theo tuần</option>
+            </select>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn" id="btn-export-excel" type="button">📊 Xuất Excel (CSV)</button>
+            <button class="btn primary" id="btn-export-pdf" type="button">📄 In / Xuất PDF</button>
+          </div>
+        </div>
+
+        <!-- 1. Thẻ tổng quan số lượng & Quá hạn -->
         <div id="stat-cards" class="stat-cards"></div>
+
+        <!-- 2. Tỷ lệ hoàn thành dự án -->
         <div class="card">
-          <h3>Phân bổ trạng thái</h3>
+          <div class="row-between">
+            <div>
+              <h3 style="margin: 0 0 4px;">Tỷ lệ hoàn thành dự án</h3>
+              <span id="stat-progress-sub" class="muted small"></span>
+            </div>
+            <span id="stat-progress-badge" class="badge" style="font-size: 14px; font-weight: 700; padding: 4px 12px; background: #dcfce7; color: #166534;"></span>
+          </div>
+          <div class="progress" style="height: 16px; border-radius: 8px; margin: 12px 0 8px; background: #e5e7eb;">
+            <div id="stat-progress-fill" style="height: 100%; border-radius: 8px; background: var(--ok); transition: width 0.4s ease;"></div>
+          </div>
+          <div id="stat-summary-tags" style="display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; margin-top: 8px;"></div>
+        </div>
+
+        <div class="card">
+          <h3>Phân bổ trạng thái công việc</h3>
           <div id="status-bars"></div>
         </div>
+
+        <!-- 3. Biểu đồ hiệu suất theo thành viên -->
         <div class="card">
-          <h3>Khối lượng theo thành viên</h3>
+          <div class="row-between">
+            <div>
+              <h3 style="margin: 0 0 4px;">Biểu đồ hiệu suất theo thành viên</h3>
+              <p class="muted small" style="margin: 0;">Theo dõi khối lượng công việc, tỷ lệ hoàn thành và cảnh báo quá hạn</p>
+            </div>
+          </div>
+          <div id="member-perf-chart" style="margin: 16px 0 20px;"></div>
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>Thành viên</th><th>Tổng</th><th>Hoàn thành</th><th>Đang mở</th><th>Quá hạn</th></tr>
+                <tr>
+                  <th>Thành viên</th>
+                  <th>Tổng việc</th>
+                  <th>Hoàn thành</th>
+                  <th>Đang mở</th>
+                  <th>Quá hạn</th>
+                  <th>Tỷ lệ hoàn thành</th>
+                  <th>Đánh giá hiệu suất</th>
+                </tr>
               </thead>
               <tbody id="member-stats"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 4. Báo cáo tiến độ theo tuần hoặc tháng -->
+        <div class="card">
+          <div class="row-between">
+            <div>
+              <h3 id="timeline-title" style="margin: 0 0 4px;">Báo cáo tiến độ theo tháng</h3>
+              <p class="muted small" id="timeline-subtitle" style="margin: 0;">Khối lượng nhiệm vụ và mức độ hoàn thành qua từng giai đoạn</p>
+            </div>
+          </div>
+          <div id="timeline-chart" style="margin: 14px 0 18px;"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mốc thời gian</th>
+                  <th>Tổng nhiệm vụ</th>
+                  <th>Hoàn thành</th>
+                  <th>Đang làm</th>
+                  <th>Chưa làm</th>
+                  <th>Quá hạn</th>
+                  <th>Tiến độ kỳ</th>
+                </tr>
+              </thead>
+              <tbody id="timeline-rows"></tbody>
             </table>
           </div>
         </div>
@@ -165,87 +324,109 @@
       <div id="tab-ai" class="tab-panel" hidden>
         <div class="card">
           <div class="row-between">
-            <h3>Trợ lý AI</h3>
-            <span id="ai-meta" class="badge"></span>
+            <div>
+              <h3 style="margin: 0 0 4px;">Trợ lý AI (Chatbox &amp; Phân tích)</h3>
+              <p class="muted small" style="margin: 0;">Trò chuyện với AI để tra cứu thông tin, hỏi đáp về tiến độ, nhiệm vụ quá hạn và phân bổ công việc.</p>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span id="ai-meta" class="badge"></span>
+              <button class="btn small" id="ai-analyze" type="button" title="Chạy phân tích toàn bộ dự án">📊 Phân tích tổng thể</button>
+            </div>
           </div>
-          <p class="muted small">
-            AI chỉ đọc dữ liệu dự án và đề xuất. Thay đổi chỉ được áp dụng khi người quản lý mở và lưu nhiệm vụ.
-          </p>
-          <div class="ai-actions">
-            <button class="btn primary" id="ai-analyze" type="button">Phân tích tiến độ</button>
+
+          <!-- Khung Chatbox chuyên dụng trong Tab -->
+          <div class="tab-chatbox-wrap">
+            <div class="ai-chat-messages" id="tab-chat-messages">
+              <!-- Nội dung tin nhắn chat -->
+            </div>
+            <div class="ai-chat-chips" id="tab-chat-chips">
+              <button type="button" class="ai-chip" data-q="Tóm tắt tiến độ dự án hiện tại">📊 Tiến độ dự án</button>
+              <button type="button" class="ai-chip" data-q="Có nhiệm vụ nào đang quá hạn không?">⚠️ Việc quá hạn</button>
+              <button type="button" class="ai-chip" data-q="Ai đang phụ trách nhiều việc nhất?">👥 Khối lượng thành viên</button>
+              <button type="button" class="ai-chip" data-q="Nên ưu tiên giải quyết việc nào tiếp theo?">⚡ Việc ưu tiên</button>
+            </div>
+            <form id="tab-chat-form" class="ai-chat-input-bar">
+              <input type="text" id="tab-chat-input" placeholder="Hỏi Trợ lý AI bất cứ điều gì về dự án..." autocomplete="off" maxlength="500" required>
+              <button class="btn primary small" type="submit">Gửi tin ➔</button>
+            </form>
           </div>
-          <div class="chips">
-            <button class="chip" type="button" data-q="Nhiệm vụ nào đang quá hạn?">Nhiệm vụ quá hạn</button>
-            <button class="chip" type="button" data-q="Ai đang có nhiều việc mở nhất?">Khối lượng công việc</button>
-            <button class="chip" type="button" data-q="Nên làm việc gì tiếp theo?">Thứ tự ưu tiên</button>
-          </div>
-          <form id="ai-ask-form" class="ask-row">
-            <input name="question" placeholder="Hoặc đặt câu hỏi tự do về dự án..." maxlength="500" required>
-            <button class="btn" type="submit">Hỏi AI</button>
-          </form>
-          <div id="ai-notice" class="notice" hidden></div>
-          <div id="ai-result" class="ai-result">
-            <p class="muted">Chọn "Phân tích tiến độ" hoặc đặt câu hỏi để bắt đầu.</p>
-          </div>
+
+          <div id="ai-notice" class="notice" hidden style="margin-top: 14px;"></div>
+          <div id="ai-result" class="ai-result" style="margin-top: 14px;"></div>
         </div>
       </div>
-                  <!-- Tab Phòng Thử prompt -->
+             <!-- Tab Phòng thử prompt -->
       <div id="tab-lab" class="tab-panel" hidden>
-        <div class="card">
+        <div class="lab-head">
+          <h2>Phòng thử prompt</h2>
+          <p class="muted small">Chạy cùng một bộ dữ liệu qua nhiều phiên bản prompt, chấm điểm và ghi lại kết quả để chọn bản tốt nhất.</p>
+        </div>
+        <div id="lab-chips" class="lab-chips"></div>
+        <div class="card lab-card">
           <div class="row-between">
-            <h3>Phòng Thử prompt</h3>
-            <span id="lab-meta" class="badge"></span>
+            <div>
+              <h3>Các phiên bản prompt</h3>
+              <p id="lab-schema" class="muted small"></p>
+            </div>
+            <button class="btn primary" id="lab-run-all" type="button">✦ Chạy tất cả phiên bản</button>
           </div>
-          <p class="muted small">
-            Chạy từng biến thể để xem kết quả riêng, hoặc chạy cả ba để so sánh. Kết quả được cộng dồn vào bảng bên dưới.
-          </p>
-          <div class="lab-row">
-            <label for="lab-variant">Biến thể:</label>
-            <select id="lab-variant">
-              <option value="v1_basic">Biến thể 1: prompt cơ bản</option>
-              <option value="v2_schema">Biến thể 2: có schema JSON</option>
-              <option value="v3_final" selected>Biến thể 3: hoàn chỉnh</option>
-            </select>
-            <button class="btn" id="lab-run-one" type="button">Chạy biến thể này</button>
-            <button class="btn primary" id="lab-run" type="button">So sánh 3 biến thể</button>
-            <button class="btn small" id="lab-clear" type="button">Xóa bảng</button>
-          </div>
-          <div class="lab-guide">
-            <p><strong>Cách đọc bảng:</strong></p>
-            <ul class="ai-list">
-              <li><strong>JSON hợp lệ:</strong> AI trả về đúng định dạng.</li>
-              <li><strong>Phải thử lại:</strong> lần đầu bị lỗi định dạng hoặc giới hạn lượt gọi nên phải gọi lại. Càng ít càng tốt.</li>
-              <li><strong>Quá hạn được nêu:</strong> số nhiệm vụ quá hạn AI đưa vào mục rủi ro, trên tổng số. Càng cao càng tốt.</li>
-              <li><strong>Mục bị loại:</strong> số mục AI bịa ID nhiệm vụ hoặc sai cấu trúc, hệ thống đã bỏ đi. Càng ít càng tốt.</li>
-            </ul>
-          </div>
-          <div id="lab-notice" class="notice" hidden></div>
-          <div id="lab-result" class="ai-result">
-            <p class="muted">Chọn biến thể rồi bấm "Chạy biến thể này", hoặc bấm "So sánh 3 biến thể".</p>
-          </div>
+          <div id="lab-cols" class="lab-cols"></div>
+        </div>
+        <div class="card lab-card">
+          <h3 id="lab-log-title">Nhật ký thử nghiệm đã ghi nhận</h3>
+          <ul id="lab-log" class="list"></ul>
         </div>
       </div>
-      <!-- Tab Thành viên -->
+            <!-- Tab Thành viên -->
       <div id="tab-members" class="tab-panel" hidden>
         <div class="card">
-          <h3>Thành viên dự án</h3>
-          <ul id="member-list" class="list"></ul>
+          <div class="row-between">
+            <h3>Thành viên dự án</h3>
+            <span class="muted small">Chủ dự án quản lý dự án và phân quyền. Thành viên làm việc được giao.</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Thành viên</th><th>Vai trò</th><th>Việc đang mở</th><th>Thao tác</th></tr></thead>
+              <tbody id="member-rows"></tbody>
+            </table>
+          </div>
         </div>
-        <form id="member-form" class="card mgr toolbar">
-          <input type="email" name="email" placeholder="Email của thành viên đã đăng ký" required>
-          <select name="role">
-            <option value="member">Thành viên</option>
-            <option value="manager">Quản lý</option>
-          </select>
-          <button class="btn primary" type="submit">Thêm thành viên</button>
-        </form>
+
+        <div class="card" id="member-detail" hidden>
+          <div class="row-between">
+            <h3 id="md-title"></h3>
+            <button class="btn small" id="md-close" type="button">Đóng</button>
+          </div>
+          <ul id="md-tasks" class="list"></ul>
+        </div>
+
+        <div class="card mgr" id="invite-card">
+          <h3>Mời thành viên</h3>
+          <form id="invite-form" class="toolbar">
+            <input type="email" name="email" placeholder="Email người được mời" required>
+            <select name="role" id="invite-role">
+              <option value="member">Thành viên</option>
+              <option value="manager">Chủ dự án</option>
+            </select>
+            <button class="btn primary" type="submit">Gửi lời mời</button>
+          </form>
+          <p class="muted small">Người được mời sẽ thấy lời mời khi đăng nhập và phải tự chấp nhận. Lời mời hết hạn sau 7 ngày.</p>
+          <ul id="invite-list" class="list"></ul>
+        </div>
+
+        <div class="card">
+          <h3>Khối lượng công việc</h3>
+          <p class="muted small" id="wl-note"></p>
+          <div id="wl-bars"></div>
+        </div>
       </div>
 
       <!-- Tab Hoạt động -->
       <div id="tab-activity" class="tab-panel" hidden>
         <div class="card">
           <h3>Nhật ký hoạt động</h3>
-          <ul id="activity-list" class="list"></ul>
+                    <ul id="activity-list" class="list"></ul>
+          <button class="btn small" id="act-more" type="button" hidden>Tải thêm</button>
         </div>
       </div>
       </div>
@@ -286,6 +467,66 @@
       </div>
     </form>
   </dialog>
+
+    <dialog id="comment-dialog">
+    <div class="dialog-form">
+      <div class="row-between">
+        <h3 id="cm-title"></h3>
+        <button class="btn small" id="cm-close" type="button">Đóng</button>
+      </div>
+      <h4 class="ai-h4">Bình luận</h4>
+      <ul id="cm-list" class="list"></ul>
+      <form id="cm-form" class="toolbar">
+        <input name="body" placeholder="Viết bình luận..." maxlength="2000" required>
+        <button class="btn primary" type="submit">Gửi</button>
+      </form>
+      <h4 class="ai-h4">Lịch sử công việc</h4>
+      <ul id="cm-history" class="list"></ul>
+    </div>
+  </dialog>
+  
+  <!-- Nút mở Trợ lý AI Chatbox nổi -->
+  <button id="ai-chat-fab" class="ai-chat-fab" type="button" title="Mở Trợ lý AI Chatbox" hidden>
+    <span class="ai-fab-icon">🤖</span>
+    <span class="ai-fab-text">Trợ lý AI</span>
+    <span class="ai-fab-badge"></span>
+  </button>
+
+  <!-- Cửa sổ Chatbox nổi -->
+  <div id="ai-chatbox-window" class="ai-chatbox-window" hidden>
+    <div class="ai-chat-header">
+      <div class="ai-chat-title-wrap">
+        <div class="ai-chat-avatar">🤖</div>
+        <div>
+          <div class="ai-chat-title">Trợ lý AI</div>
+          <div class="ai-chat-status" id="ai-chat-context-name">Sẵn sàng hỗ trợ</div>
+        </div>
+      </div>
+      <div class="ai-chat-controls">
+        <button type="button" class="ai-chat-btn" id="ai-chat-clear" title="Xóa đoạn chat">🗑️</button>
+        <button type="button" class="ai-chat-btn" id="ai-chat-close" title="Thu nhỏ">✕</button>
+      </div>
+    </div>
+
+    <!-- Danh sách tin nhắn -->
+    <div class="ai-chat-messages" id="ai-chat-messages">
+      <!-- Tin nhắn chào mừng ban đầu -->
+    </div>
+
+    <!-- Gợi ý nhanh (Quick chips) -->
+    <div class="ai-chat-chips" id="ai-chat-chips">
+      <button type="button" class="ai-chip" data-q="Tóm tắt tiến độ dự án hiện tại">📊 Tiến độ</button>
+      <button type="button" class="ai-chip" data-q="Có nhiệm vụ nào bị quá hạn không?">⚠️ Việc quá hạn</button>
+      <button type="button" class="ai-chip" data-q="Ai đang phụ trách nhiều việc nhất?">👥 Khối lượng</button>
+      <button type="button" class="ai-chip" data-q="Gợi ý việc cần ưu tiên làm tiếp theo">⚡ Việc ưu tiên</button>
+    </div>
+
+    <!-- Khung nhập tin nhắn -->
+    <form id="ai-chat-form" class="ai-chat-input-bar">
+      <input type="text" id="ai-chat-input" placeholder="Hỏi Trợ lý AI về dự án..." autocomplete="off" maxlength="500" required>
+      <button type="submit" id="ai-chat-send" class="btn primary small" title="Gửi">Gửi ➔</button>
+    </form>
+  </div>
 
   <div id="toast" class="toast"></div>
   <script src="js/app.js"></script>
