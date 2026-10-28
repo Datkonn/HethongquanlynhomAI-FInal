@@ -144,5 +144,62 @@ function seed() {
 }
 
 if (Number(db.prepare('SELECT COUNT(*) AS n FROM users').get().n) === 0) seed();
+try {
+  const { purgeOldAiLogs } = require('./security');
+  purgeOldAiLogs(db, process.env.AI_LOG_RETENTION_DAYS || 30);
+} catch {
+  // Bỏ qua nếu CSDL đang mở ở chế độ chỉ đọc hoặc trong môi trường hạn chế
+}
+
+// Migration: thông báo, bình luận, và lịch sử theo từng công việc
+const actCols = db.prepare('PRAGMA table_info(activity)').all().map((c) => c.name);
+if (!actCols.includes('task_id')) {
+  db.exec('ALTER TABLE activity ADD COLUMN task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL');
+}
+db.exec(`
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('assigned', 'status', 'comment', 'deadline')),
+  message TEXT NOT NULL CHECK (length(trim(message)) > 0),
+  read_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, read_at);
+CREATE TABLE IF NOT EXISTS task_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  body TEXT NOT NULL CHECK (length(trim(body)) > 0 AND length(body) <= 2000),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_comments_task ON task_comments(task_id, id);
+CREATE INDEX IF NOT EXISTS idx_activity_task ON activity(task_id);
+`);
+
+// Migration: chủ sở hữu dự án và bảng lời mời
+const projectCols = db.prepare('PRAGMA table_info(projects)').all().map((c) => c.name);
+if (!projectCols.includes('owner_id')) {
+  db.exec('ALTER TABLE projects ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+}
+db.exec(`
+CREATE TABLE IF NOT EXISTS invitations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  email TEXT NOT NULL CHECK (email = lower(email)),
+  role TEXT NOT NULL CHECK (role IN ('manager', 'member')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'cancelled')),
+  invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(email, status);
+UPDATE projects SET owner_id = (
+  SELECT pm.user_id FROM project_members pm
+  WHERE pm.project_id = projects.id AND pm.role = 'manager' ORDER BY pm.user_id LIMIT 1
+) WHERE owner_id IS NULL;
+`);
 
 module.exports = db;
