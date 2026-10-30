@@ -31,20 +31,42 @@ function debounce(fn, ms) {
   };
 }
 
-async function api(path, { method = 'GET', body } = {}) {
+async function api(path, { method = 'GET', body, timeout = 25000 } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    if (res.status === 401 && state.token) logout(true);
-    throw new Error(data.error || 'Có lỗi xảy ra');
+
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeout) : null;
+
+  try {
+    const res = await fetch(`/api${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller ? controller.signal : undefined,
+    });
+    if (timer) clearTimeout(timer);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 401 && state.token) logout(true);
+      const err = new Error(data.error || 'Có lỗi xảy ra');
+      err.status = res.status;
+      err.code = data.code;
+      err.retry_after = data.retry_after;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  } catch (e) {
+    if (timer) clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      const err = new Error('Yêu cầu tới AI đã quá thời gian chờ (Timeout). Máy chủ đang phản hồi chậm hoặc bị quá tải.');
+      err.status = 504;
+      err.code = 'AI_TIMEOUT';
+      throw err;
+    }
+    throw e;
   }
-  return data;
 }
 
 // ---------- Điều hướng giao diện ----------
@@ -934,16 +956,76 @@ function initChat() {
   renderChatMessages();
 }
 
+function formatChatText(text) {
+  if (!text) return '';
+  let s = esc(text);
+
+  // Tiêu đề dạng ### hoặc ##
+  s = s.replace(/#{2,3}\s*(.+)/g, '<div class="chat-section-title">$1</div>');
+
+  // In đậm **text**
+  s = s.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+  // Khối từ chối theo nguyên tắc Grounding & Chống bịa đặt (Anti-hallucination)
+  s = s.replace(
+    /(?:<div class="chat-gap"><\/div>)?\s*🚫\s*<strong>TỪ CHỐI CUNG CẤP THÔNG TIN[^<]*<\/strong>/g,
+    '<div class="chat-refusal-card"><span style="color:#ef4444;font-weight:700;">🚫 TỪ CHỐI CUNG CẤP THÔNG TIN (TUÂN THỦ NGUYÊN TẮC GROUNDING & CHỐNG BỊA ĐẶT)</span></div>'
+  );
+
+  // In nghiêng *text*
+  s = s.replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+  // Mã inline `code`
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Dòng gạch đầu dòng bullet
+  s = s.replace(/(?:^|\n)[•\-]\s*(.+)/g, '<div class="chat-bullet">• $1</div>');
+
+  // Khoảng cách giữa các đoạn
+  s = s.replace(/\n\n+/g, '<div class="chat-gap"></div>');
+  s = s.replace(/\n/g, '<br>');
+
+  return s;
+}
+
 function renderChatMessages() {
   const containers = [$('#ai-chat-messages'), $('#tab-chat-messages')].filter(Boolean);
   const html = chatHistory
     .map((msg) => {
       const isAi = msg.role === 'ai';
+      if (msg.isOverload) {
+        return `
+          <div class="chat-bubble-row ai">
+            <div class="ai-chat-avatar" style="width:28px;height:28px;font-size:14px;flex-shrink:0;">${msg.isSlow ? '⏳' : '🤖💤'}</div>
+            <div>
+              <div class="chat-bubble" style="background:transparent;padding:0;border:none;">
+                <div class="chat-overload-card">
+                  <div class="chat-overload-title">
+                    <span>${msg.isSlow ? '⏳' : '🤖💤'}</span>
+                    <span>${msg.isSlow ? 'Trợ lý AI đang phản hồi chậm' : 'Trợ lý AI đang quá tải yêu cầu (429)'}</span>
+                  </div>
+                  <div class="chat-overload-body">
+                    ${msg.isSlow
+                      ? 'Hệ thống đã nhận yêu cầu nhưng máy chủ AI mất nhiều thời gian hơn bình thường để xử lý do tập dữ liệu lớn hoặc nghẽn mạng. Bạn có thể nhấn <strong>"Thử lại"</strong> hoặc xem nhanh báo cáo có sẵn.'
+                      : 'Hiện tại có nhiều yêu cầu gửi tới AI cùng lúc. Để bảo vệ dữ liệu và chất lượng phân tích, hệ thống tạm thời giới hạn tần suất. Bạn vui lòng chờ ít giây rồi thử lại.'}
+                  </div>
+                  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <button type="button" class="chat-overload-btn" data-retry="${esc(msg.retryMsg)}">🔄 Thử lại tin nhắn này</button>
+                    <button type="button" class="btn small" onclick="setTab('stats')">📊 Xem thống kê dự án</button>
+                  </div>
+                </div>
+              </div>
+              <div class="chat-bubble-time">${esc(msg.time || '')}</div>
+            </div>
+          </div>
+        `;
+      }
+      const formatted = isAi ? formatChatText(msg.text) : esc(msg.text).replace(/\n/g, '<br>');
       return `
         <div class="chat-bubble-row ${isAi ? 'ai' : 'user'}">
           ${isAi ? '<div class="ai-chat-avatar" style="width:28px;height:28px;font-size:14px;flex-shrink:0;">🤖</div>' : ''}
           <div>
-            <div class="chat-bubble">${esc(msg.text)}</div>
+            <div class="chat-bubble">${formatted}</div>
             <div class="chat-bubble-time">${esc(msg.time || '')}</div>
           </div>
         </div>
@@ -953,6 +1035,9 @@ function renderChatMessages() {
 
   containers.forEach((c) => {
     c.innerHTML = html;
+    c.querySelectorAll('[data-retry]').forEach((btn) => {
+      btn.onclick = () => sendChatMessage(btn.dataset.retry);
+    });
     c.scrollTop = c.scrollHeight;
   });
 }
@@ -983,6 +1068,19 @@ async function sendChatMessage(text) {
     c.scrollTop = c.scrollHeight;
   });
 
+  // Hiển thị gợi ý nếu AI phản hồi chậm hơn 3.5s
+  const slowTimer = setTimeout(() => {
+    containers.forEach((c) => {
+      const bubble = c.querySelector('.chat-typing-temp .chat-bubble');
+      if (bubble && !bubble.querySelector('.chat-typing-status')) {
+        const statusSpan = document.createElement('div');
+        statusSpan.className = 'chat-typing-status';
+        statusSpan.textContent = '⏳ AI đang xử lý dữ liệu phức tạp, vui lòng đợi thêm giây lát...';
+        bubble.appendChild(statusSpan);
+      }
+    });
+  }, 3500);
+
   try {
     const res = await api('/ai/chat', {
       method: 'POST',
@@ -991,6 +1089,8 @@ async function sendChatMessage(text) {
         projectId: state.project ? state.project.id : null,
       },
     });
+
+    clearTimeout(slowTimer);
 
     // Xóa typing indicator
     containers.forEach((c) => {
@@ -1005,15 +1105,31 @@ async function sendChatMessage(text) {
     });
     renderChatMessages();
   } catch (err) {
+    clearTimeout(slowTimer);
+
     containers.forEach((c) => {
       c.querySelectorAll('.chat-typing-temp').forEach((el) => el.remove());
     });
+
+    const isOverload = err.status === 429 || err.code === 'AI_OVERLOADED' || /quá nhiều|quá tải|giới hạn/i.test(err.message);
+    const isSlow = err.status === 504 || err.code === 'AI_TIMEOUT' || /chậm|timeout|quá thời gian/i.test(err.message);
     const aiTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-    chatHistory.push({
-      role: 'ai',
-      text: `⚠️ ${err.message}`,
-      time: aiTime,
-    });
+
+    if (isOverload || isSlow) {
+      chatHistory.push({
+        role: 'ai',
+        isOverload: true,
+        isSlow,
+        retryMsg: q,
+        time: aiTime,
+      });
+    } else {
+      chatHistory.push({
+        role: 'ai',
+        text: `⚠️ ${err.message}`,
+        time: aiTime,
+      });
+    }
     renderChatMessages();
   }
 }
@@ -1085,6 +1201,7 @@ const PANELS = {
 };
 
 if ($('#ai-analyze')) $('#ai-analyze').onclick = () => runAI('analyze');
+if ($('#ai-simulate-overload')) $('#ai-simulate-overload').onclick = () => runAI('analyze', '', 'ai', true);
 if ($('#ai-ask-form')) {
   $('#ai-ask-form').onsubmit = (e) => {
     e.preventDefault();
@@ -1094,13 +1211,14 @@ if ($('#ai-ask-form')) {
 }
 document.querySelectorAll('.chip').forEach((c) => (c.onclick = () => runAI('ask', c.dataset.q)));
 
-async function runAI(kind, question = '', panel = 'ai') {
+async function runAI(kind, question = '', panel = 'ai', simulateOverload = false) {
   const p = PANELS[panel];
   const box = $(p.result);
   box.innerHTML = '<p class="muted">AI đang phân tích dữ liệu dự án...</p>';
   $(p.notice).hidden = true;
 
   const payload = kind === 'ask' ? { question } : {};
+  if (simulateOverload) payload.simulate = 'overload';
   if (p.variant) payload.variant = $(p.variant).value;
   const chosen = localStorage.getItem(`lab-variant-${state.project.id}`);
   if (chosen) payload.variant = chosen;
@@ -1113,7 +1231,40 @@ async function runAI(kind, question = '', panel = 'ai') {
     state.tasks = tasks;
     renderAiResult(data, p);
   } catch (err) {
-    box.innerHTML = `<div class="form-error">${esc(err.message)}</div>`;
+    const isOverload = err.status === 429 || err.code === 'AI_OVERLOADED' || /quá nhiều|quá tải|giới hạn/i.test(err.message);
+    const isSlow = err.status === 504 || err.code === 'AI_TIMEOUT' || /chậm|timeout|quá thời gian/i.test(err.message);
+
+    if (isOverload || isSlow) {
+      box.innerHTML = `
+        <div class="ai-overload-screen">
+          <div class="ai-overload-icon-wrap">${isSlow ? '⏳' : '🤖💤'}</div>
+          <h3 class="ai-overload-title">
+            ${isSlow ? 'Trợ lý AI đang phản hồi chậm hơn thường lệ' : 'Trợ lý AI hiện đang quá tải lượt yêu cầu (429)'}
+          </h3>
+          <p class="ai-overload-desc">
+            ${isSlow
+              ? 'Yêu cầu phân tích dự án đang mất nhiều thời gian hơn bình thường. Máy chủ AI có thể đang xử lý các phép tính phức tạp hoặc đường truyền mạng tạm thời bị nghẽn.'
+              : 'Hệ thống vừa nhận được nhiều lượt gọi AI dồn dập. Để đảm bảo tính toàn vẹn và độ tin cậy của phân tích, yêu cầu được tạm hoãn trong giây lát.'}
+          </p>
+          <div class="ai-overload-tips">
+            <div style="font-weight:600;margin-bottom:6px;">💡 Đừng lo lắng, dữ liệu của bạn hoàn toàn an toàn:</div>
+            <div>• Toàn bộ nhiệm vụ, thành viên và tiến độ đã lưu trữ nguyên vẹn trên cơ sở dữ liệu.</div>
+            <div>• Bạn có thể xem ngay tỷ lệ hoàn thành & biểu đồ phân bổ tại tab <strong>"Báo cáo & Thống kê"</strong>.</div>
+            <div>• Vui lòng chờ 5-10 giây rồi nhấn nút <strong>"Thử lại phân tích"</strong> bên dưới.</div>
+          </div>
+          <div class="ai-overload-actions">
+            <button type="button" class="btn primary" id="btn-retry-ai">🔄 Thử lại phân tích</button>
+            <button type="button" class="btn" onclick="setTab('stats')">📊 Xem Báo cáo & Thống kê</button>
+          </div>
+        </div>
+      `;
+      const retryBtn = box.querySelector('#btn-retry-ai');
+      if (retryBtn) {
+        retryBtn.onclick = () => runAI(kind, question, panel);
+      }
+    } else {
+      box.innerHTML = `<div class="form-error">${esc(err.message)}</div>`;
+    }
   }
 }
 

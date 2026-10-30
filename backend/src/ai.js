@@ -268,53 +268,260 @@ function fallbackAnalysis(ctx) {
 }
 
 function offlineAnswer(ctx, question) {
-  const q = String(question || '').toLowerCase();
+  const q = String(question || '').toLowerCase().trim();
   const tasks = ctx.tasks || [];
   const projectName = ctx.project?.name || 'dự án';
+  const total = tasks.length;
+  const done = tasks.filter((x) => x.status === 'done').length;
+  const doing = tasks.filter((x) => x.status === 'doing').length;
+  const todo = tasks.filter((x) => x.status === 'todo').length;
+  const overdue = tasks.filter((x) => x.overdue);
+  const pct = total ? Math.round((done / total) * 100) : 0;
 
-  if (/chào|hello|hi|xin chào|hey/.test(q)) {
-    return `Xin chào! Tôi là Trợ lý AI của ${projectName}. Tôi có thể giúp bạn theo dõi tiến độ, kiểm tra các việc quá hạn, phân tích khối lượng công việc của từng thành viên hoặc gợi ý các việc cần ưu tiên làm ngay. Hãy hỏi tôi bất cứ điều gì!`;
-  }
-  if (/trễ|quá hạn|deadline|hạn/.test(q)) {
-    const overdue = tasks.filter((x) => x.overdue);
-    return overdue.length
-      ? `Có ${overdue.length} nhiệm vụ quá hạn: ${overdue.map((x) => x.title).join(', ')}.`
-      : `Tuyệt vời! Hiện tại trong ${projectName} không có công việc nào bị quá hạn.`;
-  }
-  if (/tiến độ|hoàn thành|bao nhiêu|tổng quan|tóm tắt|báo cáo/.test(q)) {
-    const total = tasks.length;
-    const done = tasks.filter((x) => x.status === 'done').length;
-    const doing = tasks.filter((x) => x.status === 'doing').length;
-    const overdue = tasks.filter((x) => x.overdue).length;
-    const pct = total ? Math.round((done / total) * 100) : 0;
-    return `Tiến độ ${projectName}: Đã hoàn thành ${done}/${total} nhiệm vụ (${pct}%). Hiện có ${doing} việc đang làm và ${overdue} việc quá hạn.`;
-  }
-  if (/ưu tiên|làm gì tiếp|cần làm|gợi ý|tiếp theo/.test(q)) {
-    const highOpen = tasks.filter((x) => x.status !== 'done' && x.priority === 'high');
-    const doing = tasks.filter((x) => x.status === 'doing');
-    if (highOpen.length) {
-      return `Các công việc ưu tiên cao cần tập trung: ${highOpen.map((x) => x.title).join(', ')}.`;
+  const prioText = { high: 'Cao', medium: 'Trung bình', low: 'Thấp' };
+  const statusText = { todo: 'Chưa làm', doing: 'Đang làm', done: 'Hoàn thành' };
+
+  // 1. Chào hỏi / Giới thiệu năng lực (nếu không hỏi cụ thể nhiệm vụ)
+  const isGreeting = /(^|\s)(chào|hello|hi|hey)($|[\s!?,.])|xin chào|bạn là ai|giúp gì/i.test(q);
+
+  // 2. Kiểm tra câu hỏi về một nhiệm vụ cụ thể hoặc câu hỏi kiểm thử nhiệm vụ không có trong CSDL
+  let queriedTaskName = '';
+  const quoteMatch = question.match(/["'“‘]([^"'”’]+)["'”’]/);
+  if (quoteMatch) {
+    queriedTaskName = quoteMatch[1].trim();
+  } else {
+    const taskPhraseMatch = question.match(/(?:nhiệm vụ|công việc|task|đầu việc|tính năng|module)\s+([^?.!,;:\n]+)/i);
+    if (taskPhraseMatch) {
+      const candidate = taskPhraseMatch[1].trim();
+      const nonTaskWords = /^(nào|gì|ai|đang|bị|chưa|sắp|mới|quá hạn|ưu tiên|tiến độ|dự án|tổng quan)(\s|$)/i;
+      if (!nonTaskWords.test(candidate)) {
+        queriedTaskName = candidate;
+      }
     }
-    if (doing.length) {
-      return `Nên tập trung hoàn thành các việc đang làm: ${doing.map((x) => x.title).join(', ')}.`;
-    }
-    return 'Hiện các công việc quan trọng đã được xử lý ổn thỏa. Bạn có thể giao thêm nhiệm vụ mới.';
   }
-  if (/ai|thành viên|quá tải|khối lượng|nhiều việc/.test(q)) {
+
+  // Kiểm tra nếu câu hỏi cố ý hỏi về nhiệm vụ không có trong CSDL hoặc test từ chối
+  const isExplicitNonExistentTest = /không có trong (?:csdl|cơ sở dữ liệu|hệ thống)|không tồn tại|test việc không có|nhiệm vụ ảo|nhiệm vụ giả/i.test(q);
+
+  if (queriedTaskName || isExplicitNonExistentTest) {
+    // Tìm kiếm nhiệm vụ trong danh sách tasks
+    const matchedTask = tasks.find((t) => {
+      const tTitle = t.title.toLowerCase();
+      if (queriedTaskName) {
+        const qLower = queriedTaskName.toLowerCase();
+        return tTitle.includes(qLower) || qLower.includes(tTitle);
+      }
+      return q.includes(tTitle) || (t.description && q.includes(t.description.toLowerCase()));
+    });
+
+    if (matchedTask) {
+      return `📋 **THÔNG TIN CHI TIẾT NHIỆM VỤ**
+
+• Tên nhiệm vụ: **${matchedTask.title}**
+• Trạng thái: **${statusText[matchedTask.status] || matchedTask.status}**
+• Mức ưu tiên: **${prioText[matchedTask.priority] || matchedTask.priority}**
+• Hạn chót: **${matchedTask.deadline || 'Chưa đặt'}** ${matchedTask.overdue ? '⚠️ *(Đã quá hạn)*' : '✅ *(Đúng hạn)*'}
+• Người phụ trách: **${matchedTask.assignee || 'Chưa phân công'}**
+• Mô tả: ${matchedTask.description || 'Chưa có mô tả chi tiết.'}
+
+💡 **Gợi ý xử lý:**
+${matchedTask.overdue ? 'Nhiệm vụ này đã quá hạn, người phụ trách cần tập trung hoàn thành ngay.' : matchedTask.status === 'done' ? 'Nhiệm vụ đã hoàn thành tốt đẹp.' : 'Tiếp tục thực hiện và cập nhật trạng thái khi hoàn tất.'}`;
+    }
+
+    // NẾU HỎI VỀ NHIỆM VỤ KHÔNG CÓ TRONG CSDL -> TỪ CHỐI ĐÚNG QUY TẮC CHỐNG BỊA ĐẶT (GROUNDING)
+    const stopWords = ['nào', 'gì', 'ai', 'sắp', 'quá hạn', 'trễ', 'ưu tiên', 'tiến độ', 'dự án', 'mới'];
+    if (isExplicitNonExistentTest || (queriedTaskName && !stopWords.includes(queriedTaskName.toLowerCase()))) {
+      const targetDisplay = queriedTaskName ? `"${queriedTaskName}"` : 'được yêu cầu';
+      const sampleTasks = tasks
+        .slice(0, 4)
+        .map((t, idx) => `  ${idx + 1}. *${t.title}* (${statusText[t.status] || t.status})`)
+        .join('\n');
+
+      return `🚫 **TỪ CHỐI CUNG CẤP THÔNG TIN (TUÂN THỦ NGUYÊN TẮC GROUNDING & CHỐNG BỊA ĐẶT)**
+
+Hệ thống đã tra cứu toàn bộ cơ sở dữ liệu của dự án **"${projectName}"** nhưng **KHÔNG TÌM THẤY** nhiệm vụ hoặc công việc:
+👉 **${targetDisplay}**
+
+⚖️ **Quy tắc an toàn của Trợ lý AI (Anti-hallucination):**
+1. **Chống bịa đặt dữ liệu (No Hallucination)**: AI chỉ được phép tra cứu và phân tích trên các nhiệm vụ có thật đã lưu trong CSDL của hệ thống.
+2. **Tuyệt đối không suy diễn**: Khi nhiệm vụ không tồn tại, AI bắt buộc phải từ chối thay vì tự ý tạo số liệu giả mạo về trạng thái, tiến độ, hạn chót hay người phụ trách.
+
+💡 **Gợi ý dành cho bạn:**
+• Kiểm tra lại tên nhiệm vụ hoặc từ khóa tìm kiếm.
+• Danh sách một số nhiệm vụ thực tế đang có trong dự án:
+${sampleTasks || '  *(Dự án hiện chưa có nhiệm vụ nào)*'}
+• Nếu đây là một công việc mới cần triển khai, người quản lý có thể nhấn nút **"+ Nhiệm vụ"** trong tab Nhiệm vụ để thêm vào hệ thống.`;
+    }
+  }
+
+  // 1. Chào hỏi / Giới thiệu năng lực
+  if (isGreeting) {
+    return `👋 **Xin chào! Tôi là Trợ lý AI Quản lý Dự án.**
+
+Tôi đồng hành cùng bạn để theo dõi tiến độ và tối ưu hiệu suất cho **"${projectName}"**.
+
+📊 **Tóm tắt nhanh trạng thái dự án:**
+• Tổng số công việc: **${total} nhiệm vụ** (${done} đã xong - **${pct}%**)
+• Đang thực hiện: **${doing}** việc | Chưa bắt đầu: **${todo}** việc
+• Đáng lưu ý: **${overdue.length} nhiệm vụ quá hạn** ${overdue.length > 0 ? '⚠️' : '✅'}
+
+🎯 **Tôi có thể hỗ trợ bạn:**
+1. Rà soát chi tiết các **nhiệm vụ trễ hạn & điểm nghẽn**.
+2. Phân tích **khối lượng công việc & cảnh báo quá tải** từng thành viên.
+3. Đề xuất **thứ tự ưu tiên** công việc cần làm tiếp theo.
+4. Báo cáo **tổng quan tiến độ** dự án và đưa ra lời khuyên quản lý.
+
+*Hãy chọn gợi ý nhanh bên dưới hoặc đặt câu hỏi trực tiếp cho tôi!*`;
+  }
+
+  // 2. Nhiệm vụ quá hạn / trễ hạn / deadline
+  if (/trễ|quá hạn|deadline|hạn chót|chậm tiến độ/i.test(q)) {
+    if (!overdue.length) {
+      return `✅ **TÌNH TRẠNG TIẾN ĐỘ: TỐT**
+
+Hiện tại trong **"${projectName}"** không có công việc nào bị quá hạn. Toàn bộ các nhiệm vụ đang được thực hiện theo đúng kế hoạch.
+
+💡 **Khuyến nghị:**
+• Tiếp tục duy trì nhịp độ làm việc hiện tại.
+• Rà soát các nhiệm vụ có hạn trong 3-5 ngày tới để đảm bảo không phát sinh trễ hạn mới.`;
+    }
+
+    const highOverdue = overdue.filter((t) => t.priority === 'high');
+    const listStr = overdue
+      .map(
+        (t, idx) =>
+          `• **${idx + 1}. ${t.title}**\n   - ⏰ Hạn chót: **${t.deadline || 'Không rõ'}** (đã quá hạn)\n   - 👤 Người phụ trách: **${t.assignee || 'Chưa giao'}**\n   - ⚡ Ưu tiên: **${prioText[t.priority] || t.priority}** | Trạng thái: **${statusText[t.status] || t.status}**`
+      )
+      .join('\n\n');
+
+    return `⚠️ **BÁO CÁO CÔNG VIỆC QUÁ HẠN & ĐIỂM NGHẼN**
+
+1. **Thực trạng:**
+Có **${overdue.length} nhiệm vụ đã trễ hạn** cần can thiệp khẩn cấp:
+
+${listStr}
+
+2. **Đánh giá rủi ro & Tác động:**
+• ${highOverdue.length ? `Có **${highOverdue.length} việc quá hạn mức ưu tiên CAO**, trực tiếp đe dọa đến tiến độ bàn giao của dự án.` : 'Các việc quá hạn ở mức độ trung bình/thấp, tuy nhiên cần xử lý ngay để tránh dồn ứ.'}
+• Rủi ro phát sinh hiệu ứng domino làm chậm các công việc phụ thuộc tiếp theo.
+
+3. **Khuyến nghị hành động:**
+• **Bước 1**: Tập trung dứt điểm ngay các công việc trễ hạn có mức ưu tiên Cao.
+• **Bước 2**: Trao đổi trực tiếp với người phụ trách để tháo gỡ vướng mắc kỹ thuật.
+• **Bước 3**: Cập nhật lại mốc thời gian thực tế nếu kế hoạch cũ không còn khả thi.`;
+  }
+
+  // 3. Tiến độ / Hoàn thành / Báo cáo / Tổng quan
+  if (/tiến độ|hoàn thành|tổng quan|tóm tắt|báo cáo|thống kê|tình hình/i.test(q)) {
+    const statusAssess =
+      pct >= 75
+        ? 'Dự án đang ở giai đoạn nước rút với tỷ lệ hoàn thành rất tích cực.'
+        : pct >= 40
+        ? 'Dự án đang triển khai ổn định ở giai đoạn giữa.'
+        : 'Dự án đang ở giai đoạn khởi động hoặc cần đẩy mạnh tiến độ hơn.';
+
+    return `📊 **BÁO CÁO TIẾN ĐỘ DỰ ÁN "${projectName.toUpperCase()}"**
+
+1. **Các chỉ số cốt lõi:**
+• Tỷ lệ hoàn thành: **${pct}%** (${done}/${total} nhiệm vụ)
+• Đang thực hiện: **${doing}** nhiệm vụ
+• Chưa bắt đầu: **${todo}** nhiệm vụ
+• Bị quá hạn: **${overdue.length}** nhiệm vụ ${overdue.length > 0 ? '⚠️' : '✅'}
+
+2. **Nhận định & Đánh giá logic:**
+• ${statusAssess}
+• ${overdue.length ? `Hiện có **${overdue.length} điểm nghẽn trễ hạn** cần ưu tiên gỡ bỏ để đảm bảo mốc kết thúc dự án.` : 'Hiện không có điểm nghẽn nào về thời hạn.'}
+
+3. **Đề xuất hành động trọng tâm:**
+• Hoàn thành dứt điểm **${doing} việc đang làm** trước khi bắt đầu các nhiệm vụ mới.
+• Thường xuyên kiểm tra danh sách nhiệm vụ sắp đến hạn để chủ động phân bổ nguồn lực.`;
+  }
+
+  // 4. Khối lượng công việc / Thành viên / Quá tải / Phân công
+  if (/(^|\s)ai(\s|$|\?)|thành viên|quá tải|khối lượng|nhiều việc|phân công|gánh|phụ trách/i.test(q)) {
     const load = {};
+    const unassigned = [];
     for (const t of tasks.filter((x) => x.status !== 'done')) {
-      const a = t.assignee || 'Chưa phân công';
-      load[a] = (load[a] || 0) + 1;
+      if (!t.assignee) {
+        unassigned.push(t);
+      } else {
+        load[t.assignee] = (load[t.assignee] || 0) + 1;
+      }
     }
+
     const entries = Object.entries(load).sort((a, b) => b[1] - a[1]);
-    if (!entries.length) return 'Hiện không có công việc mở nào được giao.';
-    return 'Khối lượng công việc đang mở: ' + entries.map(([m, n]) => `${m} (${n} việc${n >= 3 ? ' - quá tải' : ''})`).join(', ') + '.';
+    if (!entries.length && !unassigned.length) {
+      return `👥 **PHÂN TÍCH KHỐI LƯỢNG CÔNG VIỆC**\n\nHiện tại tất cả công việc trong dự án đã được hoàn thành. Nhóm đang ở trạng thái rảnh rỗi.`;
+    }
+
+    const breakdownStr = entries
+      .map(
+        ([m, n], idx) =>
+          `• **${idx + 1}. ${m}**: **${n} việc đang mở** ${n >= 3 ? '⚠️ *(Cảnh báo: Có nguy cơ quá tải)*' : '✅ *(Khối lượng ổn định)*'}`
+      )
+      .join('\n');
+
+    const overloaded = entries.filter(([, n]) => n >= 3).map(([m]) => m);
+
+    return `👥 **PHÂN TÍCH KHỐI LƯỢNG CÔNG VIỆC THÀNH VIÊN**
+
+1. **Phân bổ công việc đang mở (Doing & Todo):**
+${breakdownStr || '• Chưa có thành viên nào được giao việc mở.'}
+${unassigned.length ? `• **Chưa phân công**: **${unassigned.length}** nhiệm vụ` : ''}
+
+2. **Đánh giá mức độ cân bằng tải:**
+• ${overloaded.length ? `Thành viên **${overloaded.join(', ')}** đang gánh từ 3 việc trở lên, có nguy cơ làm chậm tiến độ chung nếu bị quá tải.` : 'Khối lượng công việc giữa các thành viên đang được cân đối tốt.'}
+• ${unassigned.length ? `Cần sớm phân công người chịu trách nhiệm cho ${unassigned.length} việc chưa giao.` : 'Tất cả các việc đang mở đều đã có người chịu trách nhiệm rõ ràng.'}
+
+3. **Giải pháp điều phối:**
+• Cân nhắc chuyển giao bớt nhiệm vụ chưa bắt đầu từ người quá tải sang thành viên có ít việc hơn.
+• Giới hạn số việc "Đang làm" đồng thời tối đa 2 việc/người để tối ưu chất lượng.`;
   }
-  return `Tôi đã nhận được câu hỏi về "${question}". Hiện tại trong ${projectName} có ${tasks.length} nhiệm vụ. Bạn có thể hỏi về tiến độ, việc quá hạn, ai đang nhiều việc nhất, hoặc thứ tự ưu tiên tiếp theo!`;
+
+  // 5. Ưu tiên / Việc cần làm tiếp / Lộ trình / Next steps
+  if (/ưu tiên|làm gì tiếp|cần làm|gợi ý|tiếp theo|hướng xử lý/.test(q)) {
+    const highOpen = tasks.filter((x) => x.status !== 'done' && x.priority === 'high');
+    const doingOpen = tasks.filter((x) => x.status === 'doing');
+    const urgent = tasks
+      .filter((x) => x.status !== 'done' && (x.overdue || x.priority === 'high'))
+      .slice(0, 4);
+
+    return `⚡ **ĐỀ XUẤT THỨ TỰ ƯU TIÊN THỰC HIỆN TIẾP THEO**
+
+Dựa trên ma trận Mức độ ưu tiên & Thời hạn chót, thứ tự hành động hợp lý nhất là:
+
+1. **Nhóm khẩn cấp (Ưu tiên giải quyết trước):**
+${urgent.length ? urgent.map((t, i) => `• **${i + 1}. ${t.title}**\n   - Ưu tiên: **${prioText[t.priority]}** | Hạn: **${t.deadline || 'Chưa đặt'}**\n   - Phụ trách: **${t.assignee || 'Chưa giao'}**\n   - Lý do: ${t.overdue ? 'Đã quá hạn' : 'Ưu tiên cao cần đẩy nhanh'}`).join('\n\n') : '• Không có việc khẩn cấp nào.'}
+
+2. **Nhóm việc đang làm (Cần hoàn thành dứt điểm):**
+${doingOpen.length ? doingOpen.map((t) => `• **${t.title}** (Phụ trách: ${t.assignee || 'Chưa giao'})`).join('\n') : '• Hiện chưa có việc nào đang ở trạng thái Đang làm.'}
+
+💡 **Nguyên tắc quản lý:**
+• Áp dụng quy tắc "Xong việc cũ mới mở việc mới" để tránh dàn trải nguồn lực.
+• Theo dõi chặt chẽ các mốc thời gian để ngăn ngừa phát sinh việc quá hạn mới.`;
+  }
+
+  // Phản hồi chung có cấu trúc
+  return `Tôi đã ghi nhận câu hỏi của bạn: "${question}".
+
+📌 **Thông tin dự án "${projectName}":**
+• Tổng số nhiệm vụ: **${total}** (${done} hoàn thành - **${pct}%**)
+• Đang thực hiện: **${doing}** | Chưa làm: **${todo}** | Quá hạn: **${overdue.length}**
+
+💡 **Để tôi hỗ trợ bạn tốt nhất, bạn có thể hỏi cụ thể về:**
+1. *"Nhiệm vụ nào đang bị quá hạn?"* -> Phân tích chi tiết rủi ro trễ hạn.
+2. *"Ai đang có nhiều việc nhất?"* -> Báo cáo cân bằng khối lượng công việc.
+3. *"Nên làm việc gì tiếp theo?"* -> Đề xuất thứ tự ưu tiên khoa học.
+4. Hoặc hỏi tên một nhiệm vụ cụ thể để xem thông tin chi tiết.`;
 }
 
 function fallback(kind, ctx, question, notice, truncated) {
-  const result = kind === 'ask' ? emptyResult(offlineAnswer(ctx, question)) : fallbackAnalysis(ctx);
+  const ans = kind === 'ask' ? offlineAnswer(ctx, question) : null;
+  const isRefusal = ans && ans.includes('TỪ CHỐI CUNG CẤP THÔNG TIN');
+  const result =
+    kind === 'ask'
+      ? { ...emptyResult(ans), insufficient_data: !!isRefusal }
+      : fallbackAnalysis(ctx);
   return { mode: 'offline', provider: 'offline', prompt_version: '-', truncated, notice, result };
 }
 

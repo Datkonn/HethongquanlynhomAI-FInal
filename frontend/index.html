@@ -330,7 +330,8 @@
             </div>
             <div style="display: flex; gap: 8px; align-items: center;">
               <span id="ai-meta" class="badge"></span>
-              <button class="btn small" id="ai-analyze" type="button" title="Chạy phân tích toàn bộ dự án">📊 Phân tích tổng thể</button>
+              <button class="btn small" id="ai-simulate-overload" type="button" title="Mô phỏng trường hợp AI bị quá tải để xem màn hình lỗi thân thiện">⚡ Thử quá tải</button>
+              <button class="btn small primary" id="ai-analyze" type="button" title="Chạy phân tích toàn bộ dự án">📊 Phân tích tổng thể</button>
             </div>
           </div>
 
@@ -344,6 +345,9 @@
               <button type="button" class="ai-chip" data-q="Có nhiệm vụ nào đang quá hạn không?">⚠️ Việc quá hạn</button>
               <button type="button" class="ai-chip" data-q="Ai đang phụ trách nhiều việc nhất?">👥 Khối lượng thành viên</button>
               <button type="button" class="ai-chip" data-q="Nên ưu tiên giải quyết việc nào tiếp theo?">⚡ Việc ưu tiên</button>
+              <button type="button" class="ai-chip danger" data-q="Tiến độ nhiệm vụ 'Nâng cấp bảo mật sinh trắc học' ra sao?">🚫 Test việc không có trong CSDL</button>
+              <button type="button" class="ai-chip warning" data-q="Test AI quá tải (429)">⚡ Test quá tải</button>
+              <button type="button" class="ai-chip warning" data-q="Test AI phản hồi chậm">⏳ Test phản hồi chậm</button>
             </div>
             <form id="tab-chat-form" class="ai-chat-input-bar">
               <input type="text" id="tab-chat-input" placeholder="Hỏi Trợ lý AI bất cứ điều gì về dự án..." autocomplete="off" maxlength="500" required>
@@ -519,6 +523,9 @@
       <button type="button" class="ai-chip" data-q="Có nhiệm vụ nào bị quá hạn không?">⚠️ Việc quá hạn</button>
       <button type="button" class="ai-chip" data-q="Ai đang phụ trách nhiều việc nhất?">👥 Khối lượng</button>
       <button type="button" class="ai-chip" data-q="Gợi ý việc cần ưu tiên làm tiếp theo">⚡ Việc ưu tiên</button>
+      <button type="button" class="ai-chip danger" data-q="Tiến độ nhiệm vụ 'Tích hợp thanh toán tiền điện tử Bitcoin' ra sao?">🚫 Test việc không có trong CSDL</button>
+      <button type="button" class="ai-chip warning" data-q="Test AI quá tải (429)">⚡ Test quá tải</button>
+      <button type="button" class="ai-chip warning" data-q="Test AI phản hồi chậm">⏳ Test phản hồi chậm</button>
     </div>
 
     <!-- Khung nhập tin nhắn -->

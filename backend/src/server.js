@@ -217,10 +217,43 @@ function saveAiLog(projectId, userId, kind, prompt, result) {
 function rateLimit({ windowMs, max, message }) {
   const hits = new Map();
   return (req, res, next) => {
+    // 1. Cho phép mô phỏng quá tải (429) để kiểm tra màn hình lỗi thân thiện
+    const isSimulateOverload =
+      req.query?.simulate === 'overload' ||
+      req.body?.simulate === 'overload' ||
+      (typeof req.body?.message === 'string' && /test\s*(?:ai)?\s*quá\s*tải/i.test(req.body.message)) ||
+      (typeof req.body?.question === 'string' && /test\s*(?:ai)?\s*quá\s*tải/i.test(req.body.question));
+
+    if (isSimulateOverload) {
+      const err = httpError(429, 'Hệ thống AI đang quá tải lượt yêu cầu (429 Too Many Requests). Vui lòng thử lại sau ít phút.');
+      err.code = 'AI_OVERLOADED';
+      err.retry_after = 5;
+      return next(err);
+    }
+
+    // 2. Cho phép mô phỏng AI phản hồi chậm (504 Timeout) để kiểm tra giao diện thân thiện
+    const isSimulateSlow =
+      req.query?.simulate === 'slow' ||
+      req.body?.simulate === 'slow' ||
+      (typeof req.body?.message === 'string' && /test\s*(?:ai)?\s*(?:phản\s*hồi\s*chậm|chậm|timeout)/i.test(req.body.message)) ||
+      (typeof req.body?.question === 'string' && /test\s*(?:ai)?\s*(?:phản\s*hồi\s*chậm|chậm|timeout)/i.test(req.body.question));
+
+    if (isSimulateSlow) {
+      const err = httpError(504, 'Trợ lý AI phản hồi quá thời gian chờ (504 Gateway Timeout). Máy chủ AI đang xử lý khối lượng lớn dữ liệu hoặc kết nối bị chậm.');
+      err.code = 'AI_TIMEOUT';
+      err.retry_after = 5;
+      return next(err);
+    }
+
     const key = req.user ? `u${req.user.id}` : `ip${req.ip}`;
     const now = Date.now();
     const recent = (hits.get(key) || []).filter((t) => now - t < windowMs);
-    if (recent.length >= max) return next(httpError(429, message));
+    if (recent.length >= max) {
+      const err = httpError(429, message);
+      err.code = 'AI_OVERLOADED';
+      err.retry_after = Math.ceil((windowMs - (now - recent[0])) / 1000) || 5;
+      return next(err);
+    }
     recent.push(now);
     hits.set(key, recent);
     next();
@@ -1351,7 +1384,11 @@ app.use((err, req, res, next) => {
   if (!status && String(err.code || '').startsWith('SQLITE_CONSTRAINT')) status = 400;
   status = status || 500;
   if (status === 500) console.error(err);
-  res.status(status).json({ error: status === 500 ? 'Lỗi máy chủ, vui lòng thử lại' : err.message });
+  res.status(status).json({
+    error: status === 500 ? 'Lỗi máy chủ, vui lòng thử lại' : err.message,
+    code: err.code || (status === 429 ? 'AI_OVERLOADED' : status === 504 ? 'AI_TIMEOUT' : undefined),
+    retry_after: err.retry_after,
+  });
 });
 
 if (require.main === module) {
