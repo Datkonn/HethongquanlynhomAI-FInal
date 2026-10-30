@@ -188,3 +188,46 @@ test('AI Chatbox: hỏi đáp qua API chatbox (POST /api/ai/chat)', async () => 
   assert.ok(general.data.answer);
   assert.equal(typeof general.data.answer, 'string');
 });
+
+test('AI Chatbox: từ chối khi hỏi về nhiệm vụ không có trong CSDL đúng quy tắc grounding', async () => {
+  const user = await newUser('ChatterRefusal');
+  const pid = await newProject(user);
+
+  const res = await call('POST', '/ai/chat', {
+    token: user.token,
+    body: {
+      projectId: pid,
+      message: "Tiến độ nhiệm vụ 'Nâng cấp bảo mật sinh trắc học' ra sao?",
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.ok(res.data.answer.includes('TỪ CHỐI CUNG CẤP THÔNG TIN'));
+  assert.ok(res.data.answer.includes('KHÔNG TÌM THẤY'));
+  assert.ok(res.data.answer.includes('Nâng cấp bảo mật sinh trắc học'));
+  assert.ok(res.data.answer.includes('Anti-hallucination'));
+  assert.equal(res.data.result?.insufficient_data, true);
+});
+
+test('AI Chatbox & API: trả về 429 AI_OVERLOADED và 504 AI_TIMEOUT khi AI quá tải hoặc phản hồi chậm', async () => {
+  const user = await newUser('ChatterOverload');
+  const pid = await newProject(user);
+
+  // 1. Quá tải request (429)
+  const overloadRes = await call('POST', '/ai/chat', {
+    token: user.token,
+    body: { projectId: pid, message: 'Test AI quá tải request' },
+  });
+  assert.equal(overloadRes.status, 429);
+  assert.equal(overloadRes.data.code, 'AI_OVERLOADED');
+  assert.ok(overloadRes.data.error.includes('quá tải'));
+
+  // 2. Phản hồi chậm / timeout (504)
+  const slowRes = await call('POST', '/ai/chat', {
+    token: user.token,
+    body: { projectId: pid, message: 'Test AI phản hồi chậm' },
+  });
+  assert.equal(slowRes.status, 504);
+  assert.equal(slowRes.data.code, 'AI_TIMEOUT');
+  assert.ok(slowRes.data.error.includes('thời gian'));
+});
