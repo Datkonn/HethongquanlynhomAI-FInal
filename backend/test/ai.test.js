@@ -231,3 +231,64 @@ test('AI Chatbox & API: trả về 429 AI_OVERLOADED và 504 AI_TIMEOUT khi AI q
   assert.equal(slowRes.data.code, 'AI_TIMEOUT');
   assert.ok(slowRes.data.error.includes('thời gian'));
 });
+
+test('AI Chatbox & API: hiển thị số lượng nhiệm vụ quá hạn và thống kê khi hỏi', async () => {
+  const user = await newUser('ChatterOverdue');
+  const pid = await newProject(user);
+
+  // Tạo 1 nhiệm vụ quá hạn và 1 nhiệm vụ bình thường
+  await call('POST', `/projects/${pid}/tasks`, {
+    token: user.token,
+    body: { title: 'Việc đã quá hạn', deadline: '2020-01-01', status: 'doing', priority: 'high' },
+  });
+  await call('POST', `/projects/${pid}/tasks`, {
+    token: user.token,
+    body: { title: 'Việc đang làm', deadline: '2099-01-01', status: 'doing', priority: 'medium' },
+  });
+
+  // 1. Hỏi về nhiệm vụ quá hạn
+  const res = await call('POST', '/ai/chat', {
+    token: user.token,
+    body: { projectId: pid, message: 'Có nhiệm vụ nào đang quá hạn không?' },
+  });
+
+  assert.equal(res.status, 200);
+  assert.ok(
+    res.data.answer.includes('1 nhiệm vụ quá hạn') ||
+    res.data.answer.includes('1 việc quá hạn') ||
+    res.data.answer.includes('Có 1 nhiệm vụ')
+  );
+
+  // 2. Hỏi về việc đang làm
+  const resDoing = await call('POST', '/ai/chat', {
+    token: user.token,
+    body: { projectId: pid, message: 'Có bao nhiêu việc đang làm?' },
+  });
+  assert.equal(resDoing.status, 200);
+  assert.ok(resDoing.data.answer.includes('2 nhiệm vụ đang') || resDoing.data.answer.includes('2 việc đang'));
+});
+
+
+test('AI Chatbox & API: câu hỏi không liên quan (như "hôm nay ăn gì") báo lỗi dữ liệu nằm ngoài dự án', async () => {
+  const user = await newUser('ChatterScope');
+  const pid = await newProject(user);
+
+  // 1. Hỏi "hôm nay ăn gì"
+  const foodRes = await call('POST', '/ai/chat', {
+    token: user.token,
+    body: { projectId: pid, message: 'hôm nay ăn gì' },
+  });
+  assert.equal(foodRes.status, 200);
+  assert.ok(foodRes.data.answer.includes('LỖI: DỮ LIỆU NẰM NGOÀI DỰ ÁN'));
+  assert.ok(foodRes.data.answer.includes('nằm ngoài phạm vi dữ liệu'));
+  assert.equal(foodRes.data.result?.insufficient_data, true);
+
+  // 2. Hỏi "thời tiết hôm nay thế nào"
+  const weatherRes = await call('POST', '/ai/chat', {
+    token: user.token,
+    body: { projectId: pid, message: 'thời tiết hôm nay thế nào' },
+  });
+  assert.equal(weatherRes.status, 200);
+  assert.ok(weatherRes.data.answer.includes('LỖI: DỮ LIỆU NẰM NGOÀI DỰ ÁN'));
+  assert.equal(weatherRes.data.result?.insufficient_data, true);
+});

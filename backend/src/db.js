@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL CHECK (length(trim(name)) > 0),
   email TEXT NOT NULL UNIQUE CHECK (email = lower(email) AND instr(email, '@') > 1),
   password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('manager', 'member')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -108,7 +109,7 @@ function day(offset) {
 
 function seed() {
   const hash = bcrypt.hashSync('123456', 10);
-  const addUser = db.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)');
+  const addUser = db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)');
   const addMember = db.prepare('INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)');
   const addTask = db.prepare(
     'INSERT INTO tasks (project_id, title, description, assignee_id, priority, status, deadline) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -116,9 +117,9 @@ function seed() {
   const addProject = db.prepare('INSERT INTO projects (name, description, start_date, end_date) VALUES (?, ?, ?, ?)');
 
   db.transaction(() => {
-    const manager = Number(addUser.run('Trưởng nhóm (demo)', 'manager@demo.com', hash).lastInsertRowid);
-    const alice = Number(addUser.run('Thành viên A', 'a@demo.com', hash).lastInsertRowid);
-    const bob = Number(addUser.run('Thành viên B', 'b@demo.com', hash).lastInsertRowid);
+    const manager = Number(addUser.run('Trưởng nhóm (demo)', 'manager@demo.com', hash, 'manager').lastInsertRowid);
+    const alice = Number(addUser.run('Thành viên A', 'a@demo.com', hash, 'member').lastInsertRowid);
+    const bob = Number(addUser.run('Thành viên B', 'b@demo.com', hash, 'member').lastInsertRowid);
 
     const projectId = Number(
       addProject.run('Đồ án môn học - Hệ thống quản lý dự án', 'Dự án mẫu dùng để demo tính năng.', day(-20), day(40))
@@ -201,5 +202,14 @@ UPDATE projects SET owner_id = (
   WHERE pm.project_id = projects.id AND pm.role = 'manager' ORDER BY pm.user_id LIMIT 1
 ) WHERE owner_id IS NULL;
 `);
+
+// Migration: vai trò người dùng (manager hoặc member)
+// Duy nhất manager@demo.com là manager (Trưởng nhóm), tất cả các tài khoản khác đều là member (Thành viên)
+const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!userCols.includes('role')) {
+  db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
+}
+db.prepare("UPDATE users SET role = 'manager' WHERE email = 'manager@demo.com'").run();
+db.prepare("UPDATE users SET role = 'member' WHERE email != 'manager@demo.com'").run();
 
 module.exports = db;

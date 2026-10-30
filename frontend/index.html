@@ -14,6 +14,7 @@
       <div id="user-box" hidden>
                 <button id="notif-btn" class="btn small" type="button">🔔 <span id="notif-count"></span></button>
         <span id="user-name"></span>
+        <span id="user-role-badge" class="badge" hidden></span>
         <button id="logout-btn" class="btn small" type="button">Đăng xuất</button>
       </div>
     </div>
@@ -40,6 +41,7 @@
             <label for="auth-name">Họ tên</label>
             <input id="auth-name" name="name" autocomplete="name" placeholder="Nhập họ tên đầy đủ">
           </div>
+          <input type="hidden" id="auth-role" name="role" value="member">
           <div class="field">
             <label for="auth-email">Email</label>
             <input id="auth-email" name="email" type="email" autocomplete="email" placeholder="ten@email.com" required>
@@ -61,7 +63,7 @@
           <button type="button" class="link" id="auth-switch"></button>
         </div>
 
-        <p class="demo-note">Tài khoản demo: <code>manager@demo.com</code> / <code>123456</code></p>
+        <p class="demo-note">Tài khoản demo: <code>manager@demo.com</code> (Trưởng nhóm) · <code>a@demo.com</code> (Thành viên) / MK: <code>123456</code></p>
       </div>
     </section>
 
@@ -145,16 +147,27 @@
       <div id="inv-banner"></div>
       <div class="grid-2">
         <div id="project-list" class="project-grid"></div>
-        <form id="new-project-form" class="card">
-          <h3>Tạo dự án mới</h3>
-          <label>Tên dự án <input name="name" required></label>
-          <label>Mô tả <textarea name="description" rows="3"></textarea></label>
-          <div class="row">
-            <label>Bắt đầu <input type="date" name="start_date"></label>
-            <label>Kết thúc <input type="date" name="end_date"></label>
+        <div id="project-action-col">
+          <form id="new-project-form" class="card">
+            <h3>Tạo dự án mới</h3>
+            <label>Tên dự án <input name="name" required></label>
+            <label>Mô tả <textarea name="description" rows="3"></textarea></label>
+            <div class="row">
+              <label>Bắt đầu <input type="date" name="start_date"></label>
+              <label>Kết thúc <input type="date" name="end_date"></label>
+            </div>
+            <button class="btn primary" type="submit">Tạo dự án</button>
+          </form>
+          <div id="member-account-notice" class="card" hidden style="background: rgba(239, 68, 68, 0.04); border: 1px dashed var(--line); text-align: center; padding: 24px;">
+            <div style="font-size: 32px; margin-bottom: 8px;">👤</div>
+            <h3 style="margin: 0 0 8px;">Tài khoản Thành viên</h3>
+            <p class="muted small" style="margin: 0 0 12px; line-height: 1.5;">
+              Bạn đang đăng nhập với tài khoản <strong>Thành viên</strong>. Tài khoản thành viên chỉ được tham gia các dự án được phân công và <strong>không có quyền tạo dự án mới</strong>.<br>
+              Trong dự án, nếu được Trưởng nhóm phân quyền lên <strong>Chủ dự án</strong>, bạn sẽ có toàn quyền thêm, sửa, xóa nhiệm vụ và quản lý dự án như trưởng nhóm.
+            </p>
+            <span class="badge" style="background:#fef2f2;color:#b91c1c;">Quyền hạn: Xem &amp; Báo cáo tiến độ (Chủ dự án: Toàn quyền quản lý)</span>
           </div>
-          <button class="btn primary" type="submit">Tạo dự án</button>
-        </form>
+        </div>
       </div>
     </section>
 

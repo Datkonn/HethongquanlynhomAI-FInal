@@ -151,6 +151,13 @@ function prepareData(ctx, opts = {}) {
       })),
       total_tasks: ctx.tasks.length,
       shown_tasks: tasks.length,
+      statistics: {
+        total_tasks: ctx.tasks.length,
+        done_tasks: ctx.tasks.filter((t) => t.status === 'done').length,
+        doing_tasks: ctx.tasks.filter((t) => t.status === 'doing').length,
+        todo_tasks: ctx.tasks.filter((t) => t.status === 'todo').length,
+        overdue_tasks: ctx.tasks.filter((t) => t.overdue).length,
+      },
     },
   };
 }
@@ -164,6 +171,67 @@ function restoreNames(result, restoreMap) {
     a.field === 'assignee' ? { ...a, value: back(a.value) } : a
   );
   return result;
+}
+
+// Bổ sung con số thống kê chính xác vào đầu câu trả lời nếu AI chưa nêu rõ
+function enrichAnswerWithMetrics(summary, ctx, question) {
+  if (!summary || !ctx || !ctx.tasks) return summary;
+  // Không can thiệp nếu là câu từ chối hoặc báo lỗi ngoài phạm vi dữ liệu
+  if (
+    summary.includes('TỪ CHỐI CUNG CẤP THÔNG TIN') ||
+    summary.includes('KHÔNG TÌM THẤY') ||
+    summary.includes('DỮ LIỆU NẰM NGOÀI DỰ ÁN') ||
+    summary.includes('nằm ngoài phạm vi')
+  ) {
+    return summary;
+  }
+
+  const q = (question || '').toLowerCase();
+  const tasks = ctx.tasks || [];
+  const total = tasks.length;
+  const overdue = tasks.filter((t) => t.overdue);
+  const doing = tasks.filter((t) => t.status === 'doing');
+  const done = tasks.filter((t) => t.status === 'done');
+  const todo = tasks.filter((t) => t.status === 'todo');
+
+  // 1. Nếu hỏi về quá hạn / trễ hạn / deadline
+  if (/quá hạn|trễ|deadline|hạn chót|chậm tiến độ/i.test(q)) {
+    const hasCount = new RegExp(`(?:có\\s+)?(?:${overdue.length}|0)\\s*(?:nhiệm vụ|công việc|task|đầu việc|mục)\\s*quá\\s*hạn`, 'i').test(summary);
+    if (!hasCount) {
+      const header =
+        overdue.length > 0
+          ? `⚠️ **Hiện tại dự án có ${overdue.length} nhiệm vụ quá hạn (trên tổng số ${total} nhiệm vụ):**\n\n`
+          : `✅ **Hiện tại dự án không có nhiệm vụ nào bị quá hạn (0/${total} nhiệm vụ).**\n\n`;
+      return header + summary;
+    }
+  }
+
+  // 2. Nếu hỏi về việc đang làm / đang thực hiện
+  if (/(?:bao nhiêu|mấy|các|danh sách)?\s*(?:việc|nhiệm vụ|task)?\s*đang\s*(?:làm|thực hiện)/i.test(q) && !/quá hạn/i.test(q)) {
+    const hasCount = new RegExp(`(?:có\\s+)?${doing.length}\\s*(?:nhiệm vụ|công việc|task)\\s*đang\\s*(?:làm|thực hiện)`, 'i').test(summary);
+    if (!hasCount) {
+      return `📌 **Hiện tại dự án có ${doing.length} nhiệm vụ đang làm (trên tổng số ${total} nhiệm vụ):**\n\n` + summary;
+    }
+  }
+
+  // 3. Nếu hỏi về việc hoàn thành / đã xong
+  if (/(?:bao nhiêu|mấy)?\s*(?:việc|nhiệm vụ|task)?\s*(?:đã\s*)?(?:hoàn thành|xong)/i.test(q) && !/tiến độ/i.test(q)) {
+    const hasCount = new RegExp(`(?:có\\s+)?${done.length}\\s*(?:nhiệm vụ|công việc|task)\\s*hoàn\\s*thành`, 'i').test(summary);
+    if (!hasCount) {
+      const pct = total ? Math.round((done.length / total) * 100) : 0;
+      return `✅ **Hiện tại dự án đã hoàn thành ${done.length} nhiệm vụ (${pct}% trên tổng số ${total} nhiệm vụ):**\n\n` + summary;
+    }
+  }
+
+  // 4. Nếu hỏi về việc chưa làm / chưa bắt đầu
+  if (/(?:bao nhiêu|mấy)?\s*(?:việc|nhiệm vụ|task)?\s*chưa\s*(?:làm|bắt đầu)/i.test(q)) {
+    const hasCount = new RegExp(`(?:có\\s+)?${todo.length}\\s*(?:nhiệm vụ|công việc|task)\\s*chưa\\s*(?:làm|thực hiện|bắt đầu)`, 'i').test(summary);
+    if (!hasCount) {
+      return `⏳ **Hiện tại dự án có ${todo.length} nhiệm vụ chưa thực hiện (trên tổng số ${total} nhiệm vụ):**\n\n` + summary;
+    }
+  }
+
+  return summary;
 }
 
 // ---------- Kiểm tra và làm sạch đầu ra của AI ----------
@@ -267,6 +335,62 @@ function fallbackAnalysis(ctx) {
   };
 }
 
+// Kiểm tra câu hỏi có nằm ngoài phạm vi dữ liệu dự án hay không
+function isOutOfScopeQuery(question, ctx) {
+  const q = String(question || '').toLowerCase().trim();
+  if (!q) return true;
+
+  // 1. Các chủ đề đời thường không liên quan đến quản lý dự án (ăn uống, thời tiết, giải trí, phiếm đàm...)
+  const explicitOutOfScope =
+    /(?:ăn gì|uống gì|đi đâu|ở đâu|quán ăn|món ăn|nấu ăn|công thức|hôm nay ăn|trưa nay ăn|tối nay ăn|sáng nay ăn|ăn trưa|ăn tối|ăn sáng|thời tiết|dự báo thời tiết|mưa|nắng|nhiệt độ|giá vàng|giá xăng|tỷ giá|chứng khoán|bitcoin|crypto|đá bóng|bóng đá|thể thao|ronaldo|messi|ca sĩ|diễn viên|bộ phim|nghe nhạc|bài hát|chơi game|kể chuyện|làm thơ|hát|tâm sự|tình yêu|hẹn hò|người yêu|mấy tuổi|sinh năm|quê ở đâu|thủ đô|tổng thống|vua|chính trị|toán học|vật lý|hóa học)/i;
+  if (explicitOutOfScope.test(q)) {
+    return true;
+  }
+
+  // 2. Kiểm tra nếu câu hỏi có nhắc đến một nhiệm vụ hoặc thành viên có thật trong CSDL
+  const tasks = ctx?.tasks || [];
+  const members = ctx?.members || [];
+  const matchesTask = tasks.some((t) => {
+    const title = (t.title || '').toLowerCase();
+    return (
+      title &&
+      (q.includes(title) ||
+        (title.length > 5 && title.split(' ').filter((w) => w.length > 2).some((w) => q.includes(w))))
+    );
+  });
+  if (matchesTask) return false;
+
+  const matchesMember = members.some((m) => {
+    const name = (m.name || '').toLowerCase();
+    return name && q.includes(name);
+  });
+  if (matchesMember) return false;
+
+  // 3. Kiểm tra các từ khóa chuyên môn dự án
+  const projectKeywords =
+    /(?:dự án|project|tiến độ|hoàn thành|công việc|nhiệm vụ|task|đầu việc|đang làm|chưa làm|quá hạn|trễ|deadline|hạn chót|ưu tiên|phân công|thành viên|ai làm|ai phụ trách|quá tải|rủi ro|báo cáo|tổng quan|thống kê|làm gì tiếp|cần làm|điểm nghẽn|kế hoạch|giao việc|mở rộng|chức năng|tính năng|module|bug|lỗi|giao diện|database|csdl|api|frontend|backend|chào|hello|hi|bạn là ai|giúp gì)/i;
+
+  if (!projectKeywords.test(q)) {
+    return true;
+  }
+
+  return false;
+}
+
+function formatOutOfScopeError(question, projectName = 'dự án') {
+  return `⚠️ **LỖI: DỮ LIỆU NẰM NGOÀI DỰ ÁN**
+
+Câu hỏi của bạn: *"${question}"* **nằm ngoài phạm vi dữ liệu** của dự án **"${projectName}"**.
+
+Trợ lý AI chỉ chuyên trách hỗ trợ và xử lý các dữ liệu liên quan trực tiếp đến dự án trong CSDL:
+• 📊 **Tiến độ dự án**: Tỷ lệ hoàn thành, số lượng công việc đã xong, đang làm hoặc chưa bắt đầu.
+• ⚠️ **Nhiệm vụ quá hạn**: Thống kê việc trễ hạn, rủi ro và giải pháp tháo gỡ.
+• 👥 **Thành viên & Phân công**: Khối lượng công việc của từng người, cảnh báo quá tải.
+• ⚡ **Ưu tiên & Kế hoạch**: Thứ tự các nhiệm vụ quan trọng cần làm tiếp theo.
+
+👉 *Vui lòng đặt câu hỏi liên quan đến công việc hoặc tiến độ của dự án để được hỗ trợ tốt nhất!*`;
+}
+
 function offlineAnswer(ctx, question) {
   const q = String(question || '').toLowerCase().trim();
   const tasks = ctx.tasks || [];
@@ -280,6 +404,11 @@ function offlineAnswer(ctx, question) {
 
   const prioText = { high: 'Cao', medium: 'Trung bình', low: 'Thấp' };
   const statusText = { todo: 'Chưa làm', doing: 'Đang làm', done: 'Hoàn thành' };
+
+  // 0. Báo lỗi ngay nếu câu hỏi nằm ngoài phạm vi dữ liệu dự án (như "hôm nay ăn gì", thời tiết...)
+  if (isOutOfScopeQuery(question, ctx)) {
+    return formatOutOfScopeError(question, projectName);
+  }
 
   // 1. Chào hỏi / Giới thiệu năng lực (nếu không hỏi cụ thể nhiệm vụ)
   const isGreeting = /(^|\s)(chào|hello|hi|hey)($|[\s!?,.])|xin chào|bạn là ai|giúp gì/i.test(q);
@@ -324,37 +453,77 @@ function offlineAnswer(ctx, question) {
 • Người phụ trách: **${matchedTask.assignee || 'Chưa phân công'}**
 • Mô tả: ${matchedTask.description || 'Chưa có mô tả chi tiết.'}
 
-💡 **Gợi ý xử lý:**
-${matchedTask.overdue ? 'Nhiệm vụ này đã quá hạn, người phụ trách cần tập trung hoàn thành ngay.' : matchedTask.status === 'done' ? 'Nhiệm vụ đã hoàn thành tốt đẹp.' : 'Tiếp tục thực hiện và cập nhật trạng thái khi hoàn tất.'}`;
+💡 **Gợi ý xử lý logic:**
+${matchedTask.overdue ? 'Nhiệm vụ này đã quá hạn, người phụ trách cần tập trung giải quyết ngay để tránh trễ hạn dây chuyền.' : matchedTask.status === 'done' ? 'Nhiệm vụ đã hoàn thành tốt đẹp.' : 'Tiếp tục triển khai theo kế hoạch và cập nhật trạng thái khi hoàn tất.'}`;
     }
 
-    // NẾU HỎI VỀ NHIỆM VỤ KHÔNG CÓ TRONG CSDL -> TỪ CHỐI ĐÚNG QUY TẮC CHỐNG BỊA ĐẶT (GROUNDING)
+    // NẾU HỎI VỀ NHIỆM VỤ KHÔNG CÓ TRONG CSDL -> TỪ CHỐI THÂN THIỆN ĐÚNG QUY TẮC CHỐNG BỊA ĐẶT (GROUNDING)
     const stopWords = ['nào', 'gì', 'ai', 'sắp', 'quá hạn', 'trễ', 'ưu tiên', 'tiến độ', 'dự án', 'mới'];
     if (isExplicitNonExistentTest || (queriedTaskName && !stopWords.includes(queriedTaskName.toLowerCase()))) {
       const targetDisplay = queriedTaskName ? `"${queriedTaskName}"` : 'được yêu cầu';
       const sampleTasks = tasks
         .slice(0, 4)
-        .map((t, idx) => `  ${idx + 1}. *${t.title}* (${statusText[t.status] || t.status})`)
+        .map((t, idx) => `  • *${t.title}* (${statusText[t.status] || t.status} | Hạn: ${t.deadline || 'Chưa đặt'})`)
         .join('\n');
 
-      return `🚫 **TỪ CHỐI CUNG CẤP THÔNG TIN (TUÂN THỦ NGUYÊN TẮC GROUNDING & CHỐNG BỊA ĐẶT)**
+      return `🔍 **THÔNG BÁO TỪ CHỐI CUNG CẤP THÔNG TIN (NGUYÊN TẮC AN TOÀN & CHỐNG BỊA ĐẶT)**
 
-Hệ thống đã tra cứu toàn bộ cơ sở dữ liệu của dự án **"${projectName}"** nhưng **KHÔNG TÌM THẤY** nhiệm vụ hoặc công việc:
+Chào bạn! Rất tiếc, Trợ lý AI đã tra cứu toàn bộ cơ sở dữ liệu của dự án **"${projectName}"** nhưng **KHÔNG TÌM THẤY** nhiệm vụ hoặc công việc:
 👉 **${targetDisplay}**
 
-⚖️ **Quy tắc an toàn của Trợ lý AI (Anti-hallucination):**
-1. **Chống bịa đặt dữ liệu (No Hallucination)**: AI chỉ được phép tra cứu và phân tích trên các nhiệm vụ có thật đã lưu trong CSDL của hệ thống.
-2. **Tuyệt đối không suy diễn**: Khi nhiệm vụ không tồn tại, AI bắt buộc phải từ chối thay vì tự ý tạo số liệu giả mạo về trạng thái, tiến độ, hạn chót hay người phụ trách.
+🤝 **Vì sao AI từ chối cung cấp thông tin này?**
+1. **Nguyên tắc chống bịa đặt (Anti-hallucination & Grounding):** Để đảm bảo tính chính xác và an toàn dữ liệu cho dự án, AI chỉ được phép tra cứu và phân tích trên các nhiệm vụ có thật đã lưu trong CSDL của hệ thống.
+2. **Tuyệt đối không suy diễn:** Khi nhiệm vụ chưa tồn tại trong hệ thống, AI xin phép từ chối thay vì tự ý tạo số liệu giả định về trạng thái, tiến độ, hạn chót hay người phụ trách.
 
-💡 **Gợi ý dành cho bạn:**
-• Kiểm tra lại tên nhiệm vụ hoặc từ khóa tìm kiếm.
-• Danh sách một số nhiệm vụ thực tế đang có trong dự án:
+💡 **Gợi ý hỗ trợ dành cho bạn:**
+• Bạn vui lòng kiểm tra lại chính tả hoặc từ khóa tìm kiếm xem có nhầm lẫn không nhé.
+• Dưới đây là danh sách một số nhiệm vụ thực tế đang có trong dự án:
 ${sampleTasks || '  *(Dự án hiện chưa có nhiệm vụ nào)*'}
-• Nếu đây là một công việc mới cần triển khai, người quản lý có thể nhấn nút **"+ Nhiệm vụ"** trong tab Nhiệm vụ để thêm vào hệ thống.`;
+• Nếu đây là một công việc mới cần triển khai, Trưởng nhóm có thể nhấn nút **"+ Nhiệm vụ"** trong tab Nhiệm vụ để thêm vào hệ thống.`;
     }
   }
 
-  // 1. Chào hỏi / Giới thiệu năng lực
+  // 3. Kiểm tra câu hỏi về thành viên không có trong dự án
+  const memberMatch = question.match(/(?:thành viên|bạn|nhân sự|người phụ trách)\s+([A-ZÀ-Ỹa-zà-ỹ0-9\s]+?)(?:\s+(?:đang|làm|phụ trách|có|chưa|đã|ở|như)|$|[?.!])/i);
+  if (memberMatch && ctx.members && ctx.members.length > 0) {
+    const rawName = memberMatch[1].trim();
+    const stopWords = ['nào', 'gì', 'ai', 'nhiều', 'ít', 'quá tải', 'dự án'];
+    if (!stopWords.includes(rawName.toLowerCase()) && rawName.length >= 2) {
+      const found = ctx.members.find((m) => m.name.toLowerCase().includes(rawName.toLowerCase()) || rawName.toLowerCase().includes(m.name.toLowerCase()));
+      if (!found) {
+        const actualMembers = ctx.members.map((m) => `  • **${m.name}** (${m.role === 'manager' ? 'Trưởng nhóm' : 'Thành viên'})`).join('\n');
+        return `🔍 **THÔNG BÁO TỪ CHỐI CUNG CẤP THÔNG TIN (NGUYÊN TẮC AN TOÀN & CHỐNG BỊA ĐẶT)**
+
+Chào bạn! Rất tiếc, Trợ lý AI đã kiểm tra danh sách thành viên của dự án **"${projectName}"** nhưng **KHÔNG TÌM THẤY** thành viên:
+👉 **"${rawName}"**
+
+🤝 **Nguyên tắc an toàn dữ liệu (Anti-hallucination & Grounding):**
+Để chống bịa đặt dữ liệu, AI chỉ phân tích và giải đáp thông tin liên quan đến các thành viên thực tế đã tham gia vào dự án trong cơ sở dữ liệu.
+
+💡 **Danh sách thành viên thực tế trong dự án:**
+${actualMembers || '  • Chưa có thành viên nào.'}
+
+Nếu thành viên mới cần tham gia dự án, Trưởng nhóm có thể vào tab **Thành viên** để mời tham gia nhé!`;
+      }
+    }
+  }
+
+  // 4. Kiểm tra câu hỏi ngoài lề hoặc prompt sai không liên quan đến dự án
+  const isOutOfScope = /thời tiết|nấu ăn|công thức|bài thơ|hát|chơi game|giá vàng|tỷ giá|chứng khoán|đá bóng|bóng đá|ca sĩ|diễn viên|bộ phim|tổng thống|vua/i.test(q);
+  if (isOutOfScope) {
+    return `👋 **Chào bạn! Tôi là Trợ lý AI chuyên trách quản lý dự án "${projectName}".**
+
+Câu hỏi của bạn dường như nằm ngoài phạm vi dữ liệu hoặc công việc của dự án này. Để hỗ trợ bạn một cách chính xác, an toàn và hiệu quả nhất, tôi xin phép chỉ tập trung giải đáp các thông tin có trong cơ sở dữ liệu của hệ thống:
+
+📊 **1. Tiến độ & Trạng thái**: Tỷ lệ hoàn thành, số lượng công việc đã xong, đang làm hoặc chưa bắt đầu.
+⚠️ **2. Nhiệm vụ quá hạn**: Danh sách các công việc trễ hạn, rủi ro chậm trễ và giải pháp tháo gỡ.
+👥 **3. Phân bổ công việc**: Khối lượng công việc của từng thành viên, cảnh báo quá tải.
+⚡ **4. Đề xuất ưu tiên**: Thứ tự các nhiệm vụ quan trọng cần tập trung xử lý tiếp theo.
+
+*Bạn vui lòng đặt câu hỏi liên quan đến dự án hoặc chọn một trong các gợi ý nhanh bên dưới nhé!*`;
+  }
+
+  // 5. Chào hỏi / Giới thiệu năng lực
   if (isGreeting) {
     return `👋 **Xin chào! Tôi là Trợ lý AI Quản lý Dự án.**
 
@@ -374,44 +543,96 @@ Tôi đồng hành cùng bạn để theo dõi tiến độ và tối ưu hiệu
 *Hãy chọn gợi ý nhanh bên dưới hoặc đặt câu hỏi trực tiếp cho tôi!*`;
   }
 
-  // 2. Nhiệm vụ quá hạn / trễ hạn / deadline
+  // 6. Nhiệm vụ quá hạn / trễ hạn / deadline
   if (/trễ|quá hạn|deadline|hạn chót|chậm tiến độ/i.test(q)) {
     if (!overdue.length) {
-      return `✅ **TÌNH TRẠNG TIẾN ĐỘ: TỐT**
+      return `✅ **TÌNH TRẠNG TIẾN ĐỘ: TỐT (0 NHIỆM VỤ QUÁ HẠN)**
 
-Hiện tại trong **"${projectName}"** không có công việc nào bị quá hạn. Toàn bộ các nhiệm vụ đang được thực hiện theo đúng kế hoạch.
+Dự án hiện có **0 nhiệm vụ quá hạn** (trên tổng số **${total} nhiệm vụ**). Toàn bộ các nhiệm vụ đang được thực hiện theo đúng kế hoạch.
 
-💡 **Khuyến nghị:**
-• Tiếp tục duy trì nhịp độ làm việc hiện tại.
-• Rà soát các nhiệm vụ có hạn trong 3-5 ngày tới để đảm bảo không phát sinh trễ hạn mới.`;
+📊 **Thống kê bổ trợ:**
+• Đã hoàn thành: **${done}** việc (${pct}%)
+• Đang thực hiện: **${doing}** việc
+• Chưa thực hiện: **${todo}** việc
+
+💡 **Khuyến nghị điều hành:**
+1. Tiếp tục duy trì nhịp độ làm việc và phối hợp chặt chẽ giữa các thành viên.
+2. Rà soát các nhiệm vụ có hạn trong 3-5 ngày tới để đảm bảo không phát sinh trễ hạn mới.`;
     }
 
     const highOverdue = overdue.filter((t) => t.priority === 'high');
     const listStr = overdue
       .map(
         (t, idx) =>
-          `• **${idx + 1}. ${t.title}**\n   - ⏰ Hạn chót: **${t.deadline || 'Không rõ'}** (đã quá hạn)\n   - 👤 Người phụ trách: **${t.assignee || 'Chưa giao'}**\n   - ⚡ Ưu tiên: **${prioText[t.priority] || t.priority}** | Trạng thái: **${statusText[t.status] || t.status}**`
+          `• **${idx + 1}. ${t.title}**\n   - ⏰ Hạn chót: **${t.deadline || 'Không rõ'}** (đã quá hạn)\n   - 👤 Người phụ trách: **${t.assignee || 'Chưa giao'}**\n   - ⚡ Ưu tiên: **${prioText[t.priority] || t.priority}** | Trạng thái: **${statusText[t.status] || t.status}`
       )
       .join('\n\n');
 
-    return `⚠️ **BÁO CÁO CÔNG VIỆC QUÁ HẠN & ĐIỂM NGHẼN**
+    return `⚠️ **Dự án hiện có ${overdue.length} nhiệm vụ quá hạn (trên tổng số ${total} nhiệm vụ):**
 
-1. **Thực trạng:**
-Có **${overdue.length} nhiệm vụ đã trễ hạn** cần can thiệp khẩn cấp:
-
+1. 📋 **Danh sách chi tiết các công việc bị quá hạn:**
 ${listStr}
 
-2. **Đánh giá rủi ro & Tác động:**
-• ${highOverdue.length ? `Có **${highOverdue.length} việc quá hạn mức ưu tiên CAO**, trực tiếp đe dọa đến tiến độ bàn giao của dự án.` : 'Các việc quá hạn ở mức độ trung bình/thấp, tuy nhiên cần xử lý ngay để tránh dồn ứ.'}
-• Rủi ro phát sinh hiệu ứng domino làm chậm các công việc phụ thuộc tiếp theo.
+2. 🔍 **Phân tích nguyên nhân & Đánh giá rủi ro:**
+• **Mức độ khẩn cấp:** ${highOverdue.length ? `Có **${highOverdue.length} việc quá hạn ở mức ưu tiên CAO**, trực tiếp đe dọa mốc bàn giao dự án.` : 'Các việc quá hạn thuộc mức trung bình/thấp, tuy nhiên cần dứt điểm sớm.'}
+• **Điểm nghẽn:** Việc trễ hạn có thể tạo hiệu ứng domino làm trì hoãn các nhiệm vụ tiếp theo.
 
-3. **Khuyến nghị hành động:**
-• **Bước 1**: Tập trung dứt điểm ngay các công việc trễ hạn có mức ưu tiên Cao.
-• **Bước 2**: Trao đổi trực tiếp với người phụ trách để tháo gỡ vướng mắc kỹ thuật.
-• **Bước 3**: Cập nhật lại mốc thời gian thực tế nếu kế hoạch cũ không còn khả thi.`;
+3. 🎯 **Khuyến nghị 3 bước hành động khắc phục:**
+• **Bước 1 (Ưu tiên số 1):** Tập trung dứt điểm ngay các nhiệm vụ ưu tiên Cao (${highOverdue.map((t) => `"${t.title}"`).join(', ') || 'các việc có nguy cơ cao'}).
+• **Bước 2 (Gỡ vướng):** Trưởng nhóm trao đổi trực tiếp với người phụ trách để tháo gỡ khó khăn kỹ thuật hoặc bổ sung hỗ trợ.
+• **Bước 3 (Điều chỉnh):** Nếu kế hoạch cũ không còn khả thi, cập nhật lại mốc thời gian thực tế và thông báo cho nhóm.`;
   }
 
-  // 3. Tiến độ / Hoàn thành / Báo cáo / Tổng quan
+  // 7. Hỏi về số lượng việc đang làm (doing)
+  if (/(?:bao nhiêu|mấy|các|danh sách)?\s*(?:việc|nhiệm vụ|task)?\s*đang\s*(?:làm|thực hiện)/i.test(q) && !/quá hạn/i.test(q)) {
+    const listStr = tasks
+      .filter((t) => t.status === 'doing')
+      .map((t, idx) => `• **${idx + 1}. ${t.title}**\\n   - 👤 Phụ trách: **${t.assignee || 'Chưa giao'}**\\n   - ⏰ Hạn chót: **${t.deadline || 'Chưa đặt'}** ${t.overdue ? '⚠️ *(Đã quá hạn)*' : '✅ *(Đúng hạn)*'}\\n   - ⚡ Ưu tiên: **${prioText[t.priority] || t.priority}**`)
+      .join('\n\n');
+
+    return `📌 **Dự án hiện có ${doing} nhiệm vụ đang làm (trên tổng số ${total} nhiệm vụ):**
+
+1. 📋 **Danh sách công việc đang triển khai:**
+${listStr || '• Hiện chưa có nhiệm vụ nào ở trạng thái Đang làm.'}
+
+2. 🔍 **Đánh giá logic:**
+• Tỷ trọng công việc đang mở chiếm ${total ? Math.round((doing / total) * 100) : 0}% tổng khối lượng dự án.
+• Khuyến nghị các thành viên tập trung hoàn thành dứt điểm trước khi nhận thêm nhiệm vụ mới để tối ưu chất lượng.`;
+  }
+
+  // 8. Hỏi về số lượng việc hoàn thành (done)
+  if (/(?:bao nhiêu|mấy)?\s*(?:việc|nhiệm vụ|task)?\s*(?:đã\s*)?(?:hoàn thành|xong)/i.test(q) && !/tiến độ/i.test(q)) {
+    return `✅ **Dự án hiện đã hoàn thành ${done} nhiệm vụ (đạt ${pct}% trên tổng số ${total} nhiệm vụ):**
+
+📊 **Đối chiếu các phần việc còn lại:**
+• Đang thực hiện: **${doing}** việc (${total ? Math.round((doing / total) * 100) : 0}%)
+• Chưa bắt đầu: **${todo}** việc (${total ? Math.round((todo / total) * 100) : 0}%)
+• Bị trễ hạn: **${overdue.length}** việc ${overdue.length > 0 ? '⚠️' : '✅'}
+
+💡 **Khuyến nghị:** Duy trì hiệu suất hiện tại để hoàn thành toàn bộ các mốc kế hoạch đúng hạn!`;
+  }
+
+  // 9. Hỏi về số lượng việc chưa làm (todo)
+  if (/(?:bao nhiêu|mấy)?\s*(?:việc|nhiệm vụ|task)?\s*chưa\s*(?:làm|bắt đầu)/i.test(q)) {
+    const todoTasks = tasks.filter((t) => t.status === 'todo');
+    const unassignedTodo = todoTasks.filter((t) => !t.assignee);
+    const listStr = todoTasks
+      .slice(0, 6)
+      .map((t, idx) => `• **${idx + 1}. ${t.title}** (Ưu tiên: **${prioText[t.priority] || t.priority}** | Phụ trách: **${t.assignee || 'Chưa giao'}**)`)
+      .join('\n');
+
+    return `⏳ **Dự án hiện còn ${todo} nhiệm vụ chưa thực hiện (chiếm ${total ? Math.round((todo / total) * 100) : 0}% trên tổng số ${total} nhiệm vụ):**
+
+1. 📋 **Danh sách các việc chưa bắt đầu:**
+${listStr || '• Hiện không có việc nào chưa bắt đầu.'}
+${todoTasks.length > 6 ? `• ... và còn ${todoTasks.length - 6} việc khác.` : ''}
+
+2. 🔍 **Đánh giá & Khuyến nghị:**
+• ${unassignedTodo.length ? `Có **${unassignedTodo.length} việc chưa được phân công** người phụ trách. Trưởng nhóm nên phân bổ sớm để chuẩn bị nguồn lực.` : 'Tất cả các việc chưa làm đều đã có người chịu trách nhiệm.'}
+• Khuyến nghị phân công sớm cho các việc có mức ưu tiên Cao để tránh bị dồn ứ khi đến gần hạn chót.`;
+  }
+
+  // 10. Tiến độ / Hoàn thành / Báo cáo / Tổng quan
   if (/tiến độ|hoàn thành|tổng quan|tóm tắt|báo cáo|thống kê|tình hình/i.test(q)) {
     const statusAssess =
       pct >= 75
@@ -437,7 +658,7 @@ ${listStr}
 • Thường xuyên kiểm tra danh sách nhiệm vụ sắp đến hạn để chủ động phân bổ nguồn lực.`;
   }
 
-  // 4. Khối lượng công việc / Thành viên / Quá tải / Phân công
+  // 11. Khối lượng công việc / Thành viên / Quá tải / Phân công
   if (/(^|\s)ai(\s|$|\?)|thành viên|quá tải|khối lượng|nhiều việc|phân công|gánh|phụ trách/i.test(q)) {
     const load = {};
     const unassigned = [];
@@ -478,7 +699,7 @@ ${unassigned.length ? `• **Chưa phân công**: **${unassigned.length}** nhi�
 • Giới hạn số việc "Đang làm" đồng thời tối đa 2 việc/người để tối ưu chất lượng.`;
   }
 
-  // 5. Ưu tiên / Việc cần làm tiếp / Lộ trình / Next steps
+  // 12. Ưu tiên / Việc cần làm tiếp / Lộ trình / Next steps
   if (/ưu tiên|làm gì tiếp|cần làm|gợi ý|tiếp theo|hướng xử lý/.test(q)) {
     const highOpen = tasks.filter((x) => x.status !== 'done' && x.priority === 'high');
     const doingOpen = tasks.filter((x) => x.status === 'doing');
@@ -518,9 +739,10 @@ ${doingOpen.length ? doingOpen.map((t) => `• **${t.title}** (Phụ trách: ${t
 function fallback(kind, ctx, question, notice, truncated) {
   const ans = kind === 'ask' ? offlineAnswer(ctx, question) : null;
   const isRefusal = ans && ans.includes('TỪ CHỐI CUNG CẤP THÔNG TIN');
+  const enrichedAns = kind === 'ask' && ans ? enrichAnswerWithMetrics(ans, ctx, question) : null;
   const result =
     kind === 'ask'
-      ? { ...emptyResult(ans), insufficient_data: !!isRefusal }
+      ? { ...emptyResult(enrichedAns), insufficient_data: !!isRefusal }
       : fallbackAnalysis(ctx);
   return { mode: 'offline', provider: 'offline', prompt_version: '-', truncated, notice, result };
 }
@@ -531,6 +753,48 @@ async function generate(kind, ctx, question = '', opts = {}) {
   const variant = prompts.VARIANTS[opts.variant] || prompts.ACTIVE;
   const task = kind === 'ask' ? prompts.askTask(question) : prompts.ANALYZE_TASK;
   const user = variant.user(task, { today: ctx.today, data });
+  // Kiểm tra grounding chống bịa đặt và xử lý prompt không có trong CSDL hoặc ngoài lề
+  if (kind === 'ask') {
+    if (isOutOfScopeQuery(question, ctx)) {
+      const outOfScopeMsg = formatOutOfScopeError(question, ctx.project?.name || 'dự án');
+      return {
+        mode: 'live',
+        provider: PROVIDER,
+        prompt_version: variant.name,
+        truncated,
+        notice: 'Lỗi: Dữ liệu nằm ngoài dự án',
+        retried: false,
+        dropped: 0,
+        result: {
+          ...emptyResult(outOfScopeMsg),
+          insufficient_data: true,
+        },
+      };
+    }
+
+    const groundedPrecheck = offlineAnswer(ctx, question);
+    const isGroundingRefusal =
+      groundedPrecheck &&
+      (groundedPrecheck.includes('TỪ CHỐI CUNG CẤP THÔNG TIN') ||
+        groundedPrecheck.includes('KHÔNG TÌM THẤY') ||
+        groundedPrecheck.includes('DỮ LIỆU NẰM NGOÀI DỰ ÁN'));
+    if (isGroundingRefusal) {
+      return {
+        mode: 'live',
+        provider: PROVIDER,
+        prompt_version: variant.name,
+        truncated,
+        notice: '',
+        retried: false,
+        dropped: 0,
+        result: {
+          ...emptyResult(groundedPrecheck),
+          insufficient_data: true,
+        },
+      };
+    }
+  }
+
   const call = opts.call || providers[PROVIDER] || null;
 
   if (!call) {
@@ -552,6 +816,9 @@ async function generate(kind, ctx, question = '', opts = {}) {
     }
     const dropped = result._dropped || 0;
     delete result._dropped;
+    if (kind === 'ask' && result && result.summary) {
+      result.summary = enrichAnswerWithMetrics(result.summary, ctx, question);
+    }
     return {
       mode: 'live',
       provider: PROVIDER,

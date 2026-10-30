@@ -233,3 +233,103 @@ test('F12: xóa dự án', async () => {
   assert.equal((await call('DELETE', `/projects/${pid}`, { token: owner.token })).status, 200);
   assert.equal((await call('GET', `/projects/${pid}`, { token: owner.token })).status, 403);
 });
+
+
+test('F13: tài khoản thành viên (role: member) bị chặn tạo dự án (403) và không được thêm/sửa/xóa trong dự án', async () => {
+  const memReg = await call('POST', '/auth/register', {
+    body: { name: 'Thành viên Test', email: `mem_${Date.now()}@test.local`, password: '123456', role: 'member' }
+  });
+  assert.equal(memReg.status, 201);
+  const memToken = memReg.data.token;
+  const memId = memReg.data.user.id;
+  assert.equal(memReg.data.user.role, 'member');
+
+  // 1. Chặn tạo dự án
+  const createProj = await call('POST', '/projects', {
+    token: memToken,
+    body: { name: 'Dự án của member' }
+  });
+  assert.equal(createProj.status, 403);
+
+  // 2. Thêm vào dự án của quản lý
+  const { owner, pid } = await setup();
+  await call('POST', `/projects/${pid}/members`, { token: owner.token, body: { email: memReg.data.user.email, role: 'member' } });
+
+  // 3. Chặn thêm nhiệm vụ
+  const addTask = await call('POST', `/projects/${pid}/tasks`, {
+    token: memToken,
+    body: { title: 'Member cố thêm việc' }
+  });
+  assert.equal(addTask.status, 403);
+
+  // 4. Quản lý tạo việc và giao cho member
+  const taskCreated = await call('POST', `/projects/${pid}/tasks`, {
+    token: owner.token,
+    body: { title: 'Việc quản lý giao', assignee_id: memId }
+  });
+  const taskId = taskCreated.data.id;
+
+  // 5. Member sửa thông tin chi tiết nhiệm vụ (tiêu đề, hạn chót,...) -> bị chặn 403
+  const editTaskDetails = await call('PUT', `/tasks/${taskId}`, {
+    token: memToken,
+    body: { title: 'Member cố đổi tên việc' }
+  });
+  assert.equal(editTaskDetails.status, 403);
+
+  // 6. Member cập nhật trạng thái việc của mình -> được phép
+  const updateStatus = await call('PUT', `/tasks/${taskId}`, {
+    token: memToken,
+    body: { status: 'doing' }
+  });
+  assert.equal(updateStatus.status, 200);
+  assert.equal(updateStatus.data.status, 'doing');
+
+  // 7. Member xóa nhiệm vụ -> bị chặn 403
+  const deleteTask = await call('DELETE', `/tasks/${taskId}`, {
+    token: memToken
+  });
+  assert.equal(deleteTask.status, 403);
+
+  // 8. Member xóa dự án -> bị chặn 403
+  const deleteProj = await call('DELETE', `/projects/${pid}`, {
+    token: memToken
+  });
+  assert.equal(deleteProj.status, 403);
+
+  // 9. Quản lý phân quyền nâng vai trò của member lên "Chủ dự án" (manager)
+  const promote = await call('PUT', `/projects/${pid}/members/${memId}`, {
+    token: owner.token,
+    body: { role: 'manager' }
+  });
+  assert.equal(promote.status, 200);
+
+  // 10. Sau khi lên Chủ dự án, có toàn quyền thêm, sửa, xóa trong dự án như trưởng nhóm:
+  // a) Thêm nhiệm vụ mới thành công
+  const addTaskAsMgr = await call('POST', `/projects/${pid}/tasks`, {
+    token: memToken,
+    body: { title: 'Nhiệm vụ do Chủ dự án mới tạo', priority: 'high', deadline: '2099-01-01' }
+  });
+  assert.equal(addTaskAsMgr.status, 201);
+  const newTaskId = addTaskAsMgr.data.id;
+
+  // b) Sửa chi tiết nhiệm vụ thành công
+  const editTaskAsMgr = await call('PUT', `/tasks/${newTaskId}`, {
+    token: memToken,
+    body: { title: 'Nhiệm vụ đã được Chủ dự án sửa lại', priority: 'low' }
+  });
+  assert.equal(editTaskAsMgr.status, 200);
+  assert.equal(editTaskAsMgr.data.title, 'Nhiệm vụ đã được Chủ dự án sửa lại');
+
+  // c) Sửa thông tin dự án thành công
+  const editProjAsMgr = await call('PUT', `/projects/${pid}`, {
+    token: memToken,
+    body: { name: 'Dự án đã được Chủ dự án cập nhật' }
+  });
+  assert.equal(editProjAsMgr.status, 200);
+
+  // d) Xóa nhiệm vụ thành công
+  const deleteTaskAsMgr = await call('DELETE', `/tasks/${newTaskId}`, {
+    token: memToken
+  });
+  assert.equal(deleteTaskAsMgr.status, 200);
+});

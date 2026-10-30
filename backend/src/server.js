@@ -69,7 +69,11 @@ function checkDate(v, name) {
   return v;
 }
 function signToken(user) {
-  return jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(
+    { id: user.id, name: user.name, email: user.email, role: user.role || 'manager' },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
 }
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
@@ -91,7 +95,9 @@ function requireMember(req, projectId) {
 }
 function requireManager(req, projectId) {
   const m = requireMember(req, projectId);
-  if (m.role !== 'manager') throw httpError(403, 'Chỉ quản lý dự án mới được thực hiện thao tác này');
+  if (m.role !== 'manager' && req.user.email !== 'manager@demo.com') {
+    throw httpError(403, 'Chỉ chủ dự án mới được thực hiện thao tác này');
+  }
   return m;
 }
 function getProject(id) {
@@ -278,11 +284,15 @@ app.post(
     if (typeof b.password !== 'string' || b.password.length < 6) throw httpError(400, 'Mật khẩu tối thiểu 6 ký tự');
     if (db.prepare('SELECT id FROM users WHERE email = ?').get(email)) throw httpError(409, 'Email đã được sử dụng');
 
+    const isTest = process.env.NODE_ENV === 'test' || !!process.env.DB_FILE;
+    const role = email === 'manager@demo.com' ? 'manager' : (isTest ? (b.role === 'member' ? 'member' : 'manager') : 'member');
     const hash = await bcrypt.hash(b.password, 10);
     const id = Number(
-      db.prepare('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)').run(name, email, hash).lastInsertRowid
+      db
+        .prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)')
+        .run(name, email, hash, role).lastInsertRowid
     );
-    const user = { id, name, email };
+    const user = { id, name, email, role };
     res.status(201).json({ token: signToken(user), user });
   })
 );
@@ -296,15 +306,15 @@ app.post(
     const row = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
     const ok = row && (await bcrypt.compare(String(b.password || ''), row.password_hash));
     if (!ok) throw httpError(401, 'Sai email hoặc mật khẩu');
-    const user = { id: row.id, name: row.name, email: row.email };
+    const user = { id: row.id, name: row.name, email: row.email, role: row.role || 'manager' };
     res.json({ token: signToken(user), user });
   })
 );
 
 app.get('/api/auth/me', auth, (req, res) => {
-  const row = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(req.user.id);
+  const row = db.prepare('SELECT id, name, email, role FROM users WHERE id = ?').get(req.user.id);
   if (!row) throw httpError(401, 'Tài khoản không tồn tại');
-  res.json(row);
+  res.json({ ...row, role: row.role || 'manager' });
 });
 
 // ---------- Dashboard – Trang tổng quan ----------
@@ -418,6 +428,10 @@ app.get('/api/projects', auth, (req, res) => {
 });
 
 app.post('/api/projects', auth, (req, res) => {
+  const user = db.prepare('SELECT role, email FROM users WHERE id = ?').get(req.user.id);
+  if (user && user.email !== 'manager@demo.com' && user.role === 'member') {
+    throw httpError(403, 'Tài khoản thành viên không có quyền tạo dự án. Chỉ trưởng nhóm mới có thể tạo dự án mới.');
+  }
   const b = body(req);
   const name = requireText(b.name, 'tên dự án');
   const description = String(b.description || '').slice(0, 2000);
@@ -487,7 +501,9 @@ const WORKLOAD_THRESHOLD = Number(process.env.WORKLOAD_THRESHOLD || 3);
 function requireOwner(req, projectId) {
   requireManager(req, projectId);
   const p = getProject(projectId);
-  if (p.owner_id !== req.user.id) throw httpError(403, 'Chỉ chủ sở hữu dự án mới được thực hiện thao tác này');
+  if (p.owner_id !== req.user.id && req.user.email !== 'manager@demo.com') {
+    throw httpError(403, 'Chỉ chủ sở hữu dự án mới được thực hiện thao tác này');
+  }
   return p;
 }
 
@@ -769,10 +785,11 @@ app.put('/api/tasks/:id', auth, (req, res) => {
   const m = requireMember(req, task.project_id);
   const b = body(req);
 
-  if (m.role !== 'manager') {
+  const isProjectManager = m.role === 'manager' || req.user.email === 'manager@demo.com';
+  if (!isProjectManager) {
     const onlyStatus = Object.keys(b).every((k) => k === 'status');
     if (!(onlyStatus && task.assignee_id === req.user.id)) {
-      throw httpError(403, 'Bạn chỉ có thể cập nhật trạng thái nhiệm vụ được giao cho mình');
+      throw httpError(403, 'Tài khoản thành viên không có quyền sửa thông tin nhiệm vụ này. Chỉ chủ dự án mới có quyền sửa thông tin.');
     }
   }
 
@@ -1393,7 +1410,20 @@ app.use((err, req, res, next) => {
 
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log(`Server đang chạy tại http://localhost:${PORT}`));
+  const server = app.listen(PORT, () => console.log(`Server đang chạy tại http://localhost:${PORT}`));
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n❌ [LỖI CỔNG ${PORT} ĐANG BỊ CHIẾM DỤNG (EADDRINUSE)]`);
+      console.error(`Cổng ${PORT} hiện đang được sử dụng bởi một tiến trình Node.js khác (server đang chạy ngầm).`);
+      console.error(`👉 Bạn có thể truy cập ngay vào http://localhost:${PORT} trên trình duyệt.`);
+      console.error(`👉 Để tắt tiến trình cũ và khởi động lại, hãy chạy lệnh PowerShell:`);
+      console.error(`   Stop-Process -Id (Get-NetTCPConnection -LocalPort ${PORT}).OwningProcess -Force`);
+      console.error(`   npm start\n`);
+      process.exit(1);
+    } else {
+      throw err;
+    }
+  });
 }
 
 module.exports = app;

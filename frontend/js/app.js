@@ -89,6 +89,7 @@ function renderAuth() {
   $('#auth-subtitle').textContent = reg ? 'Tạo tài khoản mới để bắt đầu quản lý dự án' : 'Chào mừng bạn quay lại';
   $('#auth-name-row').hidden = !reg;
   $('#auth-name').required = reg;
+  if ($('#auth-role-row')) $('#auth-role-row').hidden = !reg;
   $('#auth-password').autocomplete = reg ? 'new-password' : 'current-password';
   $('#auth-switch-text').textContent = reg ? 'Đã có tài khoản?' : 'Chưa có tài khoản?';
   $('#auth-switch').textContent = reg ? 'Đăng nhập' : 'Đăng ký ngay';
@@ -124,7 +125,10 @@ $('#auth-form').onsubmit = async (e) => {
   e.preventDefault();
   const form = Object.fromEntries(new FormData(e.target));
   const payload = { email: form.email, password: form.password };
-  if (authMode === 'register') payload.name = form.name;
+  if (authMode === 'register') {
+    payload.name = form.name;
+    payload.role = form.role || 'member';
+  }
 
   showAuthError('');
   setAuthLoading(true);
@@ -146,6 +150,13 @@ $('#auth-form').onsubmit = async (e) => {
 
 async function enterApp() {
   $('#user-name').textContent = state.user.name;
+  const roleBadge = $('#user-role-badge');
+  if (roleBadge) {
+    const isMember = state.user.role === 'member';
+    roleBadge.textContent = isMember ? 'Thành viên' : 'Trưởng nhóm';
+    roleBadge.className = 'badge ' + (isMember ? 'warning' : 'ok');
+    roleBadge.hidden = false;
+  }
   $('#user-box').hidden = false;
   if ($('#ai-chat-fab')) $('#ai-chat-fab').hidden = false;
   updateChatContext();
@@ -334,11 +345,15 @@ if ($('#refresh-dash-btn')) {
 
 // ---------- Danh sách dự án ----------
 async function loadProjects() {
+  const isMember = state.user && state.user.role === 'member' && state.user.email !== 'manager@demo.com';
+  if ($('#new-project-form')) $('#new-project-form').hidden = isMember;
+  if ($('#member-account-notice')) $('#member-account-notice').hidden = !isMember;
+
   const projects = await api('/projects');
   await loadDashboard(projects);
   const list = $('#project-list');
   if (!projects.length) {
-    list.innerHTML = '<p class="muted">Bạn chưa tham gia dự án nào. Hãy tạo dự án mới.</p>';
+    list.innerHTML = `<p class="muted">${isMember ? 'Bạn chưa được phân công vào dự án nào.' : 'Bạn chưa tham gia dự án nào. Hãy tạo dự án mới.'}</p>`;
     return;
   }
   list.innerHTML = projects
@@ -363,6 +378,10 @@ async function loadProjects() {
 
 $('#new-project-form').onsubmit = async (e) => {
   e.preventDefault();
+  if (state.user && state.user.role === 'member' && state.user.email !== 'manager@demo.com') {
+    toast('Tài khoản thành viên không có quyền tạo dự án. Chỉ trưởng nhóm mới có thể tạo dự án mới.', true);
+    return;
+  }
   const f = Object.fromEntries(new FormData(e.target));
   try {
     const p = await api('/projects', {
@@ -499,6 +518,10 @@ async function updateTask(id, payload) {
 }
 
 async function deleteTask(id) {
+  if (!state.isManager) {
+    toast('Chỉ chủ dự án mới có quyền xóa nhiệm vụ', true);
+    return;
+  }
   if (!confirm('Xóa nhiệm vụ này?')) return;
   try {
     await api(`/tasks/${id}`, { method: 'DELETE' });
@@ -513,6 +536,10 @@ $('#add-task-btn').onclick = () => openTaskDialog(null);
 $('#task-cancel').onclick = () => $('#task-dialog').close();
 
 function openTaskDialog(task) {
+  if (!state.isManager) {
+    toast('Chỉ chủ dự án mới có quyền thêm hoặc sửa nhiệm vụ', true);
+    return;
+  }
   const f = $('#task-form');
   f.reset();
   const set = (name, v) => (f.elements[name].value = v ?? '');
@@ -529,6 +556,10 @@ function openTaskDialog(task) {
 
 $('#task-form').onsubmit = async (e) => {
   e.preventDefault();
+  if (!state.isManager) {
+    toast('Chỉ chủ dự án mới có quyền thêm hoặc sửa nhiệm vụ', true);
+    return;
+  }
   const d = Object.fromEntries(new FormData(e.target));
   const payload = {
     title: d.title,
@@ -718,12 +749,12 @@ async function refreshProject() {
   const p = await api(`/projects/${state.project.id}`);
   state.project = p;
   state.members = p.members;
-  state.isManager = p.my_role === 'manager';
-  state.isOwner = p.owner_id === state.user.id;
+  state.isManager = p.my_role === 'manager' || state.user?.email === 'manager@demo.com';
+  state.isOwner = p.owner_id === state.user?.id || state.user?.email === 'manager@demo.com';
   $('#project-title').textContent = p.name;
   $('#project-desc').textContent = p.description || 'Chưa có mô tả';
   $('#project-dates').textContent =
-    `Thời gian: ${p.start_date || '?'} → ${p.end_date || '?'} · Vai trò của bạn: ${ROLE_LABEL[p.my_role]}` +
+    `Thời gian: ${p.start_date || '?'} → ${p.end_date || '?'} · Vai trò của bạn: ${ROLE_LABEL[p.my_role] || 'Thành viên'}` +
     (state.isOwner ? ' (chủ sở hữu)' : '');
   fillMemberSelects();
   $('#invite-role option[value="manager"]').disabled = !state.isOwner;
@@ -872,6 +903,10 @@ $('#invite-form').onsubmit = async (e) => {
 };
 
 $('#project-delete').onclick = async () => {
+  if (!state.isOwner) {
+    toast('Tài khoản thành viên không có quyền xóa dự án', true);
+    return;
+  }
   if (!confirm('Xóa dự án này? Toàn bộ nhiệm vụ và nhật ký sẽ bị xóa, không khôi phục được.')) return;
   try {
     await api(`/projects/${state.project.id}`, { method: 'DELETE' });
